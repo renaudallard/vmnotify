@@ -1011,8 +1011,11 @@ screenshot(const struct vnc *v, const char *path)
 	FILE *fp;
 	const uint8_t *p;
 	size_t i;
+	int fd;
 
-	if ((fp = fopen(path, "w")) == NULL)
+	/* it shows the VM, keep it to the user */
+	if ((fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+	    0600)) == -1 || (fp = fdopen(fd, "w")) == NULL)
 		fatal("%s", path);
 	fprintf(fp, "P6\n%d %d\n255\n", v->w, v->h);
 	for (i = 0, p = v->fb; i < (size_t)v->w * v->h; i++, p += 4) {
