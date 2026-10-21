@@ -171,6 +171,12 @@ Only the RFB security types None and VNC authentication are supported,
 which is what VMware Workstation offers.
 .Sh ENVIRONMENT
 .Bl -tag -width XDG_RUNTIME_DIR
+.It Ev HOME
+Where
+.Pa .vmnotifyrc
+is read from, and where the lock file goes when
+.Ev XDG_RUNTIME_DIR
+is not set.
 .It Ev VNC_PASSWORD
 Password for the VNC server, used instead of the one in
 .Pa ~/.vmnotifyrc .
