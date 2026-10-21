@@ -974,8 +974,7 @@ vnc_refresh(struct vnc *v, const struct region *a, const struct region *b)
 	}
 	area(v, a, b, box);
 	if (!covered(v, box))
-		debug("only part of the area came after %d requests",
-		    REFRESHES);
+		log_warnx("screen incomplete after %d requests", REFRESHES);
 }
 
 /* Screen handling */
