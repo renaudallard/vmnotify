@@ -889,6 +889,18 @@ clamp(int n, int max)
 	return n < 0 ? 0 : n > max ? max : n;
 }
 
+/* The on screen part of r as x0, y0, x1, y1, return 0 if there is none. */
+static int
+clip(const struct vnc *v, const struct region *r, int c[4])
+{
+	origin(v, r, &c[0], &c[1]);
+	c[2] = clamp(c[0] + r->w, v->w);
+	c[3] = clamp(c[1] + r->h, v->h);
+	c[0] = clamp(c[0], v->w);
+	c[1] = clamp(c[1], v->h);
+	return c[0] < c[2] && c[1] < c[3];
+}
+
 /*
  * The part of the screen covering regions a and b, either may be NULL.
  * The whole screen when none is given or they are all off screen.
@@ -898,22 +910,15 @@ area(const struct vnc *v, const struct region *a, const struct region *b,
     int box[4])
 {
 	const struct region *r[2] = { a, b };
-	int i, x0, y0, x1, y1, bx0 = v->w, by0 = v->h, bx1 = 0, by1 = 0;
+	int i, c[4], bx0 = v->w, by0 = v->h, bx1 = 0, by1 = 0;
 
 	for (i = 0; i < 2; i++) {
-		if (r[i] == NULL)
+		if (r[i] == NULL || !clip(v, r[i], c))
 			continue;
-		origin(v, r[i], &x0, &y0);
-		x1 = clamp(x0 + r[i]->w, v->w);
-		y1 = clamp(y0 + r[i]->h, v->h);
-		x0 = clamp(x0, v->w);
-		y0 = clamp(y0, v->h);
-		if (x0 >= x1 || y0 >= y1)
-			continue;
-		bx0 = x0 < bx0 ? x0 : bx0;
-		by0 = y0 < by0 ? y0 : by0;
-		bx1 = x1 > bx1 ? x1 : bx1;
-		by1 = y1 > by1 ? y1 : by1;
+		bx0 = c[0] < bx0 ? c[0] : bx0;
+		by0 = c[1] < by0 ? c[1] : by0;
+		bx1 = c[2] > bx1 ? c[2] : bx1;
+		by1 = c[3] > by1 ? c[3] : by1;
 	}
 	if (bx0 >= bx1 || by0 >= by1) {
 		bx0 = by0 = 0;
@@ -1274,6 +1279,17 @@ toast_seen(char *text, const regex_t *re, char **last)
 	*body = '\n';
 }
 
+/* Nothing would ever be seen there, say so. */
+static void
+offscreen(const struct vnc *v, const struct region *r, const char *name)
+{
+	int c[4];
+
+	if (!clip(v, r, c))
+		log_warnx("the %s area %d,%d,%d,%d is off the %dx%d screen",
+		    name, r->x, r->y, r->w, r->h, v->w, v->h);
+}
+
 static void __attribute__((__noreturn__))
 watch(struct vnc *v, const struct region *toast, const struct region *badge,
     const regex_t *re, int interval, int cooldown)
@@ -1357,6 +1373,11 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		t = now();
 		if (dirty) {
 			dirty = 0;
+			if (fresh) {
+				offscreen(v, toast, "toast");
+				if (badge != NULL)
+					offscreen(v, badge, "badge");
+			}
 			crop(v, toast, cur);
 			if (fresh || memcmp(cur, prev, len) != 0) {
 				debug("toast area changed");
