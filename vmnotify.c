@@ -112,7 +112,6 @@ static int debugging;
 static int logsyslog;
 /* what we are waiting for, for error messages */
 static const char *stage = "connecting";
-static volatile sig_atomic_t child;
 
 /* Logging, to stderr or with -d to syslog */
 
@@ -1540,8 +1539,8 @@ static void
 onsignal(int sig)
 {
 	(void)sig;
-	if (child > 0)
-		kill(child, SIGTERM);
+	/* daemon() gave us our own group, the watcher and its commands */
+	kill(0, SIGTERM);
 	_exit(0);
 }
 
@@ -1553,22 +1552,23 @@ static void
 supervise(void)
 {
 	struct sigaction sa;
-	sigset_t block, old;
 	pid_t pid;
 	int status;
 
-	sigemptyset(&block);
-	sigaddset(&block, SIGTERM);
-	sigaddset(&block, SIGINT);
-	sigaddset(&block, SIGHUP);
+	/*
+	 * Stopping the supervisor stops the whole process group. A signal
+	 * reaching the watcher before it reset its handlers does the same.
+	 */
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = onsignal;
 	sigemptyset(&sa.sa_mask);
-	if (sigprocmask(SIG_BLOCK, &block, &old) == -1 ||
-	    sigaction(SIGTERM, &sa, NULL) == -1 ||
+	sigaddset(&sa.sa_mask, SIGTERM);
+	sigaddset(&sa.sa_mask, SIGINT);
+	sigaddset(&sa.sa_mask, SIGHUP);
+	if (sigaction(SIGTERM, &sa, NULL) == -1 ||
 	    sigaction(SIGINT, &sa, NULL) == -1 ||
 	    sigaction(SIGHUP, &sa, NULL) == -1)
-		fatal("signals");
+		fatal("sigaction");
 
 	for (;;) {
 		if ((pid = fork()) == -1)
@@ -1577,29 +1577,20 @@ supervise(void)
 			signal(SIGTERM, SIG_DFL);
 			signal(SIGINT, SIG_DFL);
 			signal(SIGHUP, SIG_DFL);
-			sigprocmask(SIG_SETMASK, &old, NULL);
 			return;
 		}
-		child = pid;
-		sigprocmask(SIG_SETMASK, &old, NULL);
 		debug("started watcher %ld", (long)pid);
 
 		while (waitpid(pid, &status, 0) == -1)
 			if (errno != EINTR)
 				fatal("waitpid");
-		sigprocmask(SIG_BLOCK, &block, NULL);
-		child = 0;
 		if (WIFSIGNALED(status))
 			log_warnx("watcher killed by signal %d, restarting "
 			    "in %d seconds", WTERMSIG(status), RETRY);
 		else
 			log_warnx("watcher exited with status %d, restarting "
 			    "in %d seconds", WEXITSTATUS(status), RETRY);
-
-		/* sleep with the signals open, child is 0 so they just exit */
-		sigprocmask(SIG_SETMASK, &old, NULL);
 		sleep(RETRY);
-		sigprocmask(SIG_BLOCK, &block, NULL);
 	}
 }
 
