@@ -68,7 +68,6 @@
 #define TIMEOUT		30	/* seconds without data from the server */
 #define RETRY		30	/* seconds between restarts with -d */
 #define TICK		250	/* milliseconds between update requests */
-#define RESYNC		60	/* seconds between full updates */
 #define REFRESHES	10	/* requests to get a full update covered */
 
 extern char **environ;
@@ -1243,9 +1242,9 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	uint8_t *cur, *prev, *seen, *bcur = NULL, *bprev = NULL, *tmp;
 	size_t len, blen = 0;
 	char *lasttext = NULL;
-	long long t, changed = 0, nextreq = 0, nextfull, quiet = 0;
+	long long t, changed = 0, nextreq = 0, quiet = 0;
 	unsigned int gen;
-	int box[4], r, fresh = 1, dirty, resized, pending = 0, ocred = 0;
+	int box[4], fresh = 1, dirty, filling = 0, pending = 0, ocred = 0;
 
 	len = (size_t)toast->w * toast->h;
 	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
@@ -1260,8 +1259,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
 
+	/* nothing is pending yet, servers answer this one at once */
 	vnc_refresh(v, toast, badge);
-	nextfull = now() + RESYNC * 1000LL;
 	gen = v->gen;
 	dirty = 1;
 
@@ -1269,43 +1268,41 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		/*
 		 * The server answers an incremental request once something
 		 * changed in the area, wait TICK after each answer so that a
-		 * server answering at once cannot make us spin.
+		 * server answering at once cannot make us spin. While the
+		 * area is being filled after a resize, ask for all of it.
+		 *
+		 * Waiting for an answer never times out: a VMware server was
+		 * seen holding back even a full update until something
+		 * changed while another request was pending.
 		 */
 		t = now();
 		if (!pending && t >= nextreq) {
 			area(v, toast, badge, box);
-			vnc_request(v, 1, box);
+			vnc_request(v, !filling, box);
 			pending = 1;
 		}
 
-		resized = 0;
 		if (poll(&pfd, 1, TICK) == -1 && errno != EINTR)
 			fatal("poll");
 		while (poll(&pfd, 1, 0) > 0) {
-			if ((r = vnc_message(v)) == 0)
+			if (vnc_message(v) == 0)
 				continue;
 			pending = 0;
 			nextreq = now() + TICK;
 			dirty = 1;
-			if (r == 2)
-				resized = 1;
 		}
 
-		/*
-		 * After a resize the screen is blank. A full update every
-		 * RESYNC seconds also catches a server that stopped answering,
-		 * vnc_refresh() then times out.
-		 */
-		if (resized || now() >= nextfull) {
-			vnc_refresh(v, toast, badge);
-			nextfull = now() + RESYNC * 1000LL;
-			pending = 0;
-			dirty = 1;
-		}
-
-		/* the regions moved with the screen size, start over */
+		/* after a resize the screen is blank until filled again */
 		if (v->gen != gen) {
 			gen = v->gen;
+			area(v, toast, badge, v->want);
+			v->got = 0;
+			filling = 1;
+		}
+		if (filling) {
+			if (v->got < (uint64_t)v->want[2] * v->want[3])
+				continue;
+			filling = 0;
 			fresh = 1;
 		}
 
