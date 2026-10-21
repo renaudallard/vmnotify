@@ -1260,7 +1260,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	char *lasttext = NULL;
 	long long t, changed = 0, nextreq = 0, quiet = 0;
 	unsigned int gen;
-	int box[4], fresh = 1, dirty, filling = 0, pending = 0, ocred = 0;
+	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
+	int ocred = 0;
 
 	len = (size_t)toast->w * toast->h;
 	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
@@ -1296,6 +1297,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			area(v, toast, badge, box);
 			vnc_request(v, !filling, box);
 			pending = 1;
+			if (filling)
+				fills++;
 		}
 
 		if (poll(&pfd, 1, TICK) == -1 && errno != EINTR)
@@ -1312,11 +1315,17 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		if (v->gen != gen) {
 			gen = v->gen;
 			filling = 1;
+			fills = 0;
 		}
 		if (filling) {
 			area(v, toast, badge, box);
-			if (!covered(v, box))
-				continue;
+			if (!covered(v, box)) {
+				if (fills < REFRESHES)
+					continue;
+				log_warnx("screen incomplete after %d "
+				    "requests, going on with what came",
+				    REFRESHES);
+			}
 			filling = 0;
 			fresh = 1;
 		}
