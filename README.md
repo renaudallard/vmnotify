@@ -11,13 +11,18 @@ workspace.
 Two things are watched:
 
 - the toast area in the bottom right corner. When it changed and then
-  stayed the same for one interval (toasts slide in), it is run through
+  stayed the same for one second (toasts slide in), it is run through
   tesseract, and if the text matches a regex (default
   `teams|outlook|firefox`) it is sent with notify-send, the first line as
   summary and the rest as body. The area is also read once at start.
 - optionally, a taskbar icon (for example Teams). When its pixels change,
   e.g. a badge appears or the icon flashes, a "Taskbar icon changed"
   notification is sent. Further changes are ignored for 30 seconds.
+
+After a first full update, vmnotify only asks the VNC server for changes
+in the toast and taskbar areas, which it sends as they happen, so
+notifications show up within about a second and little data is moved.
+The whole area is requested again every minute.
 
 vmnotify is a single C file with no library dependencies beyond libc. It
 can run in the background by itself with `-d`.
@@ -33,8 +38,8 @@ At run time, tesseract and notify-send. On Debian:
 Static Linux amd64 binaries are attached to the
 [releases](https://github.com/renaudallard/vmnotify/releases):
 
-    tar xzf vmnotify-0.1.0-linux-amd64.tar.gz
-    cd vmnotify-0.1.0-linux-amd64
+    tar xzf vmnotify-*-linux-amd64.tar.gz
+    cd vmnotify-*-linux-amd64
     sudo install -m 755 vmnotify /usr/local/bin
     sudo install -m 644 vmnotify.1 /usr/local/share/man/man1
 
@@ -102,7 +107,8 @@ A static binary can be built with musl:
     -d          run in the background, log to syslog and start again 30
                 seconds after any error, such as the VM being powered off
     -h          show a summary of the options and of ~/.vmnotifyrc
-    -i sec      polling interval (default: 2)
+    -i sec      read the toast area once it did not change for sec
+                seconds (default: 1)
     -m regex    only forward toasts whose text matches the case insensitive
                 extended regex (default: teams|outlook|firefox)
     -s file     save a screenshot of the VM to file as PPM and exit
@@ -136,7 +142,7 @@ by anyone else.
     # like -t, -b, -i and -c
     toast -420,-430,420,380
     badge 640,-40,48,40
-    interval 2
+    interval 1
     cooldown 30
 
 The password is removed from the environment of tesseract and
@@ -160,8 +166,8 @@ Logs:
 
 - Only the VNC security types None and VNC authentication are supported,
   which is what VMware Workstation offers.
-- A toast is only read once the toast area stopped changing for one
-  interval. If something keeps changing behind a translucent toast, such
+- A toast is only read once the toast area stopped changing for the time
+  set with `-i`. If something keeps changing behind a translucent toast, such
   as a video, it is not read.
 - When the VM window is in front and you are working in Windows, the
   notifications show up on both sides.

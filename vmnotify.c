@@ -65,6 +65,9 @@
 #define MAXOCR		65536	/* OCR output kept, the rest is dropped */
 #define TIMEOUT		30	/* seconds without data from the server */
 #define RETRY		30	/* seconds between restarts with -d */
+#define TICK		250	/* milliseconds between update requests */
+#define RESYNC		60	/* seconds between full updates */
+#define REFRESHES	10	/* requests to get a full update covered */
 
 extern char **environ;
 
@@ -77,6 +80,8 @@ struct vnc {
 	int		 minor;
 	int		 w, h;
 	unsigned int	 gen;		/* bumped on screen size changes */
+	uint64_t	 got;		/* pixels received, see vnc_refresh() */
+	int		 want[4];	/* area counted in got */
 	uint8_t		*fb;		/* w * h pixels, B G R X */
 };
 
@@ -166,6 +171,17 @@ log_warnx(const char *fmt, ...)
 	va_end(ap);
 }
 
+/* Monotonic milliseconds */
+static long long
+now(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1)
+		fatal("clock_gettime");
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 static void __attribute__((__noreturn__))
 usage(void)
 {
@@ -190,7 +206,8 @@ help(void)
 	    "notification (30)\n"
 	    "  -d          run in the background and restart after errors\n"
 	    "  -h          show this help\n"
-	    "  -i sec      look at the screen every sec seconds (2)\n"
+	    "  -i sec      read the toast area once it did not change for sec "
+	    "seconds (1)\n"
 	    "  -m regex    only forward toasts matching the case insensitive "
 	    "extended\n"
 	    "              regex (teams|outlook|firefox)\n"
@@ -665,7 +682,15 @@ vnc_raw(struct vnc *v, int x, int y, int w, int h)
 {
 	static uint8_t row[65535 * 4];
 	size_t ncol;
-	int i;
+	int i, x0, y0, x1, y1;
+
+	/* count what falls in the area vnc_refresh() waits for */
+	x0 = x > v->want[0] ? x : v->want[0];
+	y0 = y > v->want[1] ? y : v->want[1];
+	x1 = x + w < v->want[0] + v->want[2] ? x + w : v->want[0] + v->want[2];
+	y1 = y + h < v->want[1] + v->want[3] ? y + h : v->want[1] + v->want[3];
+	if (x1 > x0 && y1 > y0)
+		v->got += (uint64_t)(x1 - x0) * (y1 - y0);
 
 	/* Rectangles may stick out of the screen, keep what is inside. */
 	ncol = x < v->w ? (size_t)(w < v->w - x ? w : v->w - x) : 0;
@@ -723,33 +748,105 @@ vnc_message(struct vnc *v)
 	return 0;
 }
 
+/* Top left corner of r, negative coordinates count from the far edges. */
 static void
-vnc_refresh(struct vnc *v)
+origin(const struct vnc *v, const struct region *r, int *x, int *y)
+{
+	*x = r->x < 0 ? v->w + r->x : r->x;
+	*y = r->y < 0 ? v->h + r->y : r->y;
+}
+
+static int
+clamp(int n, int max)
+{
+	return n < 0 ? 0 : n > max ? max : n;
+}
+
+/*
+ * The part of the screen covering regions a and b, either may be NULL.
+ * The whole screen when none is given or they are all off screen.
+ */
+static void
+area(const struct vnc *v, const struct region *a, const struct region *b,
+    int box[4])
+{
+	const struct region *r[2] = { a, b };
+	int i, x0, y0, x1, y1, bx0 = v->w, by0 = v->h, bx1 = 0, by1 = 0;
+
+	for (i = 0; i < 2; i++) {
+		if (r[i] == NULL)
+			continue;
+		origin(v, r[i], &x0, &y0);
+		x1 = clamp(x0 + r[i]->w, v->w);
+		y1 = clamp(y0 + r[i]->h, v->h);
+		x0 = clamp(x0, v->w);
+		y0 = clamp(y0, v->h);
+		if (x0 >= x1 || y0 >= y1)
+			continue;
+		bx0 = x0 < bx0 ? x0 : bx0;
+		by0 = y0 < by0 ? y0 : by0;
+		bx1 = x1 > bx1 ? x1 : bx1;
+		by1 = y1 > by1 ? y1 : by1;
+	}
+	if (bx0 >= bx1 || by0 >= by1) {
+		bx0 = by0 = 0;
+		bx1 = v->w;
+		by1 = v->h;
+	}
+	box[0] = bx0;
+	box[1] = by0;
+	box[2] = bx1 - bx0;
+	box[3] = by1 - by0;
+}
+
+static void
+vnc_request(struct vnc *v, int incremental, const int box[4])
+{
+	uint8_t req[10];
+
+	req[0] = 3;
+	req[1] = incremental;
+	put16(req + 2, box[0]);
+	put16(req + 4, box[1]);
+	put16(req + 6, box[2]);
+	put16(req + 8, box[3]);
+	vwrite(v, req, sizeof(req));
+}
+
+/* Fetch the part of the screen covering a and b, see area(). */
+static void
+vnc_refresh(struct vnc *v, const struct region *a, const struct region *b)
 {
 	struct pollfd pfd;
-	uint8_t req[10];
-	int r, resized;
+	uint64_t need;
+	int r, resized, tries = 0;
 
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
 
 	/* After a resize the screen is blank, ask for all of it again. */
 	do {
-		req[0] = 3;
-		req[1] = 0;
-		put16(req + 2, 0);
-		put16(req + 4, 0);
-		put16(req + 6, v->w);
-		put16(req + 8, v->h);
-		vwrite(v, req, sizeof(req));
-		while ((r = vnc_message(v)) == 0)
-			;
-		resized = r == 2;
+		area(v, a, b, v->want);
+		need = (uint64_t)v->want[2] * v->want[3];
+		v->got = 0;
+		resized = 0;
 
-		/* Catch up with anything else already sent. */
-		while (poll(&pfd, 1, 0) > 0)
-			if (vnc_message(v) == 2)
+		/*
+		 * Some servers answer with a part of the area only, ask
+		 * again until all of it came or REFRESHES requests were made.
+		 */
+		while (!resized && v->got < need && tries++ < REFRESHES) {
+			vnc_request(v, 0, v->want);
+			while ((r = vnc_message(v)) == 0)
+				;
+			if (r == 2)
 				resized = 1;
+
+			/* Catch up with anything else already sent. */
+			while (poll(&pfd, 1, 0) > 0)
+				if (vnc_message(v) == 2)
+					resized = 1;
+		}
 	} while (resized);
 }
 
@@ -761,8 +858,7 @@ crop(const struct vnc *v, const struct region *r, uint8_t *out)
 	const uint8_t *p;
 	int i, j, x0, y0, x, y;
 
-	x0 = r->x < 0 ? v->w + r->x : r->x;
-	y0 = r->y < 0 ? v->h + r->y : r->y;
+	origin(v, r, &x0, &y0);
 	for (j = 0; j < r->h; j++) {
 		for (i = 0; i < r->w; i++) {
 			x = x0 + i;
@@ -1045,26 +1141,17 @@ toast_seen(char *text, const regex_t *re, char **last)
 	*body = '\n';
 }
 
-static time_t
-now(void)
-{
-	struct timespec ts;
-
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1)
-		fatal("clock_gettime");
-	return ts.tv_sec;
-}
-
 static void __attribute__((__noreturn__))
 watch(struct vnc *v, const struct region *toast, const struct region *badge,
     const regex_t *re, int interval, int cooldown)
 {
+	struct pollfd pfd;
 	uint8_t *cur, *prev, *seen, *bcur = NULL, *bprev = NULL, *tmp;
 	size_t len, blen = 0;
 	char *lasttext = NULL;
-	time_t quiet = 0;
+	long long t, changed = 0, nextreq = 0, nextfull, quiet = 0;
 	unsigned int gen;
-	int first = 1, ocred = 0;
+	int box[4], r, fresh = 1, dirty, resized, pending = 0, ocred = 0;
 
 	len = (size_t)toast->w * toast->h;
 	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
@@ -1076,47 +1163,94 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		    (bprev = malloc(blen)) == NULL)
 			fatal("malloc");
 	}
+	pfd.fd = v->fd;
+	pfd.events = POLLIN;
+
+	vnc_refresh(v, toast, badge);
+	nextfull = now() + RESYNC * 1000LL;
 	gen = v->gen;
+	dirty = 1;
 
 	for (;;) {
-		vnc_refresh(v);
+		/*
+		 * The server answers an incremental request once something
+		 * changed in the area, wait TICK after each answer so that a
+		 * server answering at once cannot make us spin.
+		 */
+		t = now();
+		if (!pending && t >= nextreq) {
+			area(v, toast, badge, box);
+			vnc_request(v, 1, box);
+			pending = 1;
+		}
+
+		resized = 0;
+		if (poll(&pfd, 1, TICK) == -1 && errno != EINTR)
+			fatal("poll");
+		while (poll(&pfd, 1, 0) > 0) {
+			if ((r = vnc_message(v)) == 0)
+				continue;
+			pending = 0;
+			nextreq = now() + TICK;
+			dirty = 1;
+			if (r == 2)
+				resized = 1;
+		}
+
+		/*
+		 * After a resize the screen is blank. A full update every
+		 * RESYNC seconds also catches a server that stopped answering,
+		 * vnc_refresh() then times out.
+		 */
+		if (resized || now() >= nextfull) {
+			vnc_refresh(v, toast, badge);
+			nextfull = now() + RESYNC * 1000LL;
+			pending = 0;
+			dirty = 1;
+		}
 
 		/* the regions moved with the screen size, start over */
 		if (v->gen != gen) {
 			gen = v->gen;
-			first = 1;
+			fresh = 1;
+		}
+
+		t = now();
+		if (dirty) {
+			dirty = 0;
+			crop(v, toast, cur);
+			if (fresh || memcmp(cur, prev, len) != 0) {
+				tmp = prev;
+				prev = cur;
+				cur = tmp;
+				changed = t;
+			}
+			if (badge != NULL) {
+				crop(v, badge, bcur);
+				if (!fresh && memcmp(bcur, bprev, blen) != 0 &&
+				    t >= quiet) {
+					show("taskbar icon", "changed");
+					notify("VM", "Taskbar icon changed");
+					quiet = t + cooldown * 1000LL;
+				}
+				tmp = bprev;
+				bprev = bcur;
+				bcur = tmp;
+			}
+			fresh = 0;
 		}
 
 		/*
 		 * Toasts slide in, only read the area once it stayed the
-		 * same for a whole interval.
+		 * same for interval seconds.
 		 */
-		crop(v, toast, cur);
-		if (!first && memcmp(cur, prev, len) == 0 &&
-		    (!ocred || memcmp(cur, seen, len) != 0)) {
-			memcpy(seen, cur, len);
+		if (t - changed >= interval * 1000LL &&
+		    (!ocred || memcmp(prev, seen, len) != 0)) {
+			memcpy(seen, prev, len);
 			ocred = 1;
-			toast_seen(ocr(cur, toast->w, toast->h), re, &lasttext);
+			toast_seen(ocr(prev, toast->w, toast->h), re,
+			    &lasttext);
 		}
-		tmp = prev;
-		prev = cur;
-		cur = tmp;
-
-		if (badge != NULL) {
-			crop(v, badge, bcur);
-			if (!first && memcmp(bcur, bprev, blen) != 0 &&
-			    now() >= quiet) {
-				show("taskbar icon", "changed");
-				notify("VM", "Taskbar icon changed");
-				quiet = now() + cooldown;
-			}
-			tmp = bprev;
-			bprev = bcur;
-			bcur = tmp;
-		}
-
-		first = 0;
-		sleep(interval);
 	}
 }
 
@@ -1370,13 +1504,13 @@ parse_server(char *s, const char **host, char *port, size_t portlen)
 int
 main(int argc, char *argv[])
 {
-	struct vnc v = { -1, 0, 0, 0, 0, NULL };
+	struct vnc v = { .fd = -1 };
 	struct region toast = { -420, -430, 420, 380 }, badge, *bp = NULL;
 	regex_t re;
 	const char *host, *shot = NULL;
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
 	char port[8], *p;
-	int ch, error, fd, k, dflag = 0, interval = 2, cooldown = 30;
+	int ch, error, fd, k, dflag = 0, interval = 1, cooldown = 30;
 
 	/* make sure 0, 1 and 2 are open, children rely on them */
 	while ((fd = open("/dev/null", O_RDWR)) != -1 && fd <= 2)
@@ -1476,7 +1610,7 @@ main(int argc, char *argv[])
 	if (shot != NULL) {
 		vnc_connect(&v, host, port);
 		vnc_handshake(&v, opt[K_PASSWORD]);
-		vnc_refresh(&v);
+		vnc_refresh(&v, NULL, NULL);
 		screenshot(&v, shot);
 		close(v.fd);
 		free(v.fb);
