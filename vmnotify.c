@@ -42,6 +42,9 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -68,6 +71,9 @@
 #define TIMEOUT		30	/* seconds without data from the server */
 #define RETRY		30	/* seconds between restarts with -d */
 #define TICK		250	/* milliseconds between update requests */
+#define KEEPIDLE	60	/* seconds idle before TCP keepalive probes */
+#define KEEPINTVL	10	/* seconds between probes */
+#define KEEPCNT		6	/* unanswered probes before giving up */
 #define REFRESHES	10	/* requests to get a full update covered */
 
 extern char **environ;
@@ -596,7 +602,8 @@ vnc_connect(struct vnc *v, const char *host, const char *port)
 {
 	struct addrinfo hints, *res, *ai;
 	struct timeval tv = { TIMEOUT, 0 };
-	int error, fd = -1, save = 0;
+	int error, fd = -1, save = 0, on = 1, idle = KEEPIDLE;
+	int intvl = KEEPINTVL, cnt = KEEPCNT;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -625,6 +632,19 @@ vnc_connect(struct vnc *v, const char *host, const char *port)
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1 ||
 	    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == -1)
 		fatal("setsockopt");
+
+	/*
+	 * Waiting for an update has no timeout, keepalive notices a server
+	 * that went away without closing, such as a host that rebooted.
+	 * It does not touch the RFB stream.
+	 */
+	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)) == -1 ||
+	    setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle,
+	    sizeof(idle)) == -1 ||
+	    setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl,
+	    sizeof(intvl)) == -1 ||
+	    setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt)) == -1)
+		fatal("keepalive");
 	debug("connected");
 	v->fd = fd;
 }
