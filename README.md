@@ -20,8 +20,9 @@ Two things are watched:
   notification is sent. Further changes are ignored for 30 seconds.
 
 After a first full update, vmnotify only asks the VNC server for changes
-in the toast and taskbar areas, which it sends as they happen, so
-notifications show up within about a second and little data is moved.
+in the box covering the toast and taskbar areas, which it sends as they
+happen, so notifications show up within about a second and little data
+is moved.
 
 vmnotify is a single C file with no library dependencies beyond libc. It
 can run in the background by itself with `-d`.
