@@ -101,8 +101,8 @@ A static binary can be built with musl:
              [-t x,y,w,h] [server]
 
     -b x,y,w,h  watch this taskbar icon for badge changes
-    -c sec      ignore taskbar icon changes for sec after a notification
-                (default: 30)
+    -c sec      ignore taskbar icon changes for sec after a taskbar icon
+                notification (default: 30)
     -d          run in the background, log to syslog and start again 30
                 seconds after any error, such as the VM being powered off
     -h          show the version and a summary of the options and of
