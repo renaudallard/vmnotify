@@ -11,10 +11,17 @@ workspace.
 Two things are watched:
 
 - the toast area in the bottom right corner. When it changed and then
-  stayed the same for one second (toasts slide in), it is run through
-  tesseract, and if the text matches a regex (default
+  stayed the same for one second (toasts slide in), the changed part is
+  run through tesseract, and if the text matches a regex (default
   `teams|outlook|firefox`) it is sent with notify-send, the first line as
   summary and the rest as body. The area is also read once at start.
+
+  To save work, a change is only read when it covers at least 15% of the
+  area or two lines of text, so a line changing in a window underneath
+  is ignored, and a toast going away is noticed by the area looking like
+  it did before. Only colour differences count, never particular
+  colours, so light and dark themes work alike, and light text on a dark
+  toast is turned dark on light for tesseract.
 - optionally, a taskbar icon (for example Teams). When its pixels change,
   e.g. a badge appears or the icon flashes, a "Taskbar icon changed"
   notification is sent. Further changes are ignored for 30 seconds.
@@ -178,6 +185,9 @@ Logs:
   as a video, it is not read.
 - When the VM window is in front and you are working in Windows, the
   notifications show up on both sides.
+- A toast that is not forwarded and then replaced by one that is, with
+  only its first line differing, is not read.
+- App icons and close buttons may add a few stray characters to the text.
 - Any window in the bottom right corner whose text matches the regex
   triggers a notification, once per distinct text.
 - A taskbar icon also changes when the badge goes away or the mouse hovers

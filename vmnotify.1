@@ -52,10 +52,20 @@ The whole area is requested again after the screen size changed.
 When the toast area changed and then stayed the same for the time set
 with
 .Fl i ,
-which skips the slide in animation of toasts, it is converted to grey,
-light text on a dark background is turned dark on light, it is scaled up
-twice and passed to
+which skips the slide in animation of toasts, it is compared with how it
+looked without a toast, ignoring small colour shifts.
+Unless a toast is already on screen, the change is only read when it
+covers at least 15% of the area or spans at least 40 rows, about two
+lines of text, so that a line changing in a window underneath does not
+cost a recognition.
+Only the changed part is read: the solid rectangle a toast paints when
+its background differs from what is underneath, or else all changed
+pixels.
+It is converted to grey, light text on a dark background is turned dark
+on light, it is scaled up twice and passed to
 .Xr tesseract 1 .
+When the area is back to how it looked before the toast, the toast is
+gone and nothing is read.
 The area is also read once at start, so a toast already on screen is
 forwarded.
 If the recognised text matches
@@ -288,6 +298,10 @@ set with
 .Fl i .
 If something keeps changing behind a translucent toast, such as a video,
 it is not read.
+.Pp
+A toast that is not forwarded and then replaced by one that is, with
+only its first line differing, is not read.
+App icons and close buttons may add a few stray characters to the text.
 .Pp
 Any window in the toast area whose text matches
 .Ar regex

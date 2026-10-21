@@ -74,7 +74,11 @@
 #define KEEPIDLE	60	/* seconds idle before TCP keepalive probes */
 #define KEEPINTVL	10	/* seconds between probes */
 #define KEEPCNT		6	/* unanswered probes before giving up */
+#define MINCHANGE	15	/* percent of the toast area to change */
+#define MINHEIGHT	40	/* or rows it spans, about two text lines */
+#define NOISE		32	/* grey levels a pixel may move unseen */
 #define AROUND		20	/* pixels on each side judging the background */
+#define BLOCK		8	/* side of the blocks a toast fills */
 #define REFRESHES	10	/* requests to get a full update covered */
 
 extern char **environ;
@@ -1176,21 +1180,24 @@ tidy(char *s)
 }
 
 static char *
-ocr(const uint8_t *img, int w, int h)
+ocr(const uint8_t *img, int stride, const int box[4])
 {
 	char *argv[] = { "tesseract", "stdin", "stdout", NULL };
 	char hdr[64], *text, buf[4096];
 	uint8_t *flat, *big;
-	size_t len = 0, bigsz = (size_t)w * h * 4;
+	size_t len = 0, bigsz;
 	ssize_t n;
 	long long start;
 	pid_t pid;
-	int in[2], out[2], hlen;
+	int in[2], out[2], hlen, y, w = box[2], h = box[3];
 
+	bigsz = (size_t)w * h * 4;
 	if ((flat = malloc((size_t)w * h)) == NULL ||
 	    (big = malloc(bigsz)) == NULL || (text = malloc(MAXOCR)) == NULL)
 		fatal("malloc");
-	memcpy(flat, img, (size_t)w * h);
+	for (y = 0; y < h; y++)
+		memcpy(flat + (size_t)y * w,
+		    img + (size_t)(box[1] + y) * stride + box[0], w);
 	polarity(flat, w, h);
 	upscale(flat, w, h, big);
 	free(flat);
@@ -1296,7 +1303,8 @@ show(const char *what, const char *text)
 		printf("%s: %s\n", what, buf);
 }
 
-static void
+/* Return 1 if text is a toast to forward, sent or already sent. */
+static int
 toast_seen(char *text, const regex_t *re, char **last)
 {
 	char *body;
@@ -1306,11 +1314,11 @@ toast_seen(char *text, const regex_t *re, char **last)
 		free(*last);
 		*last = NULL;
 		free(text);
-		return;
+		return 0;
 	}
 	if (*last != NULL && strcmp(text, *last) == 0) {
 		free(text);
-		return;
+		return 1;
 	}
 	free(*last);
 	*last = text;
@@ -1318,11 +1326,102 @@ toast_seen(char *text, const regex_t *re, char **last)
 	/* first line is the summary, the rest the body */
 	if ((body = strchr(text, '\n')) == NULL) {
 		notify(text, "");
-		return;
+		return 1;
 	}
 	*body = '\0';
 	notify(text, body + 1);
 	*body = '\n';
+	return 1;
+}
+
+/*
+ * Compare two w by h images of the toast area. Return the percentage of
+ * pixels differing by more than NOISE, and in span the height of the
+ * box around them. Put in box the part to read.
+ *
+ * A toast whose background differs from what is underneath repaints a
+ * solid rectangle. When the blocks of BLOCK pixels that mostly changed
+ * cover three quarters of the changes, the box is around them, which
+ * leaves out a text line changing underneath at the same time, and solid
+ * is set. A toast on a window of the same colour only changes its text,
+ * the box is then around all changes. Growing it would take in the cut
+ * off bottom of text above the toast. It is the whole area when nothing
+ * changed.
+ */
+static int
+compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
+    int *solid, int *span)
+{
+	size_t i, n = 0, nb;
+	int *cnt, x, y, bw = w / BLOCK, bh = h / BLOCK;
+	int x0 = w, y0 = h, x1 = 0, y1 = 0;
+	int dx0 = w, dy0 = h, dx1 = 0, dy1 = 0;
+
+	/* regions are at least 1x1, see parse_region() */
+	if (w <= 0 || h <= 0)
+		fatalx("empty toast area");
+	nb = (size_t)bw * bh;
+	if ((cnt = calloc(nb > 0 ? nb : 1, sizeof(*cnt))) == NULL)
+		fatal("calloc");
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < w; x++) {
+			i = (size_t)y * w + x;
+			if (a[i] <= b[i] + NOISE && b[i] <= a[i] + NOISE)
+				continue;
+			n++;
+			x0 = x < x0 ? x : x0;
+			y0 = y < y0 ? y : y0;
+			x1 = x + 1 > x1 ? x + 1 : x1;
+			y1 = y + 1 > y1 ? y + 1 : y1;
+			if (x / BLOCK < bw && y / BLOCK < bh)
+				cnt[(size_t)(y / BLOCK) * bw + x / BLOCK]++;
+		}
+	}
+	for (y = 0; y < bh; y++) {
+		for (x = 0; x < bw; x++) {
+			if (cnt[(size_t)y * bw + x] <= BLOCK * BLOCK / 2)
+				continue;
+			dx0 = x * BLOCK < dx0 ? x * BLOCK : dx0;
+			dy0 = y * BLOCK < dy0 ? y * BLOCK : dy0;
+			dx1 = (x + 1) * BLOCK > dx1 ? (x + 1) * BLOCK : dx1;
+			dy1 = (y + 1) * BLOCK > dy1 ? (y + 1) * BLOCK : dy1;
+		}
+	}
+	free(cnt);
+
+	*span = n > 0 ? y1 - y0 : 0;
+	*solid = dx0 < dx1 && 4 * (size_t)(dx1 - dx0) * (dy1 - dy0) >=
+	    3 * (size_t)(x1 - x0) * (y1 - y0);
+	if (*solid) {
+		box[0] = dx0;
+		box[1] = dy0;
+		box[2] = dx1 - dx0;
+		box[3] = dy1 - dy0;
+	} else if (n > 0) {
+		box[0] = x0;
+		box[1] = y0;
+		box[2] = x1 - x0;
+		box[3] = y1 - y0;
+	} else {
+		box[0] = box[1] = 0;
+		box[2] = w;
+		box[3] = h;
+	}
+	return (int)(n * 100 / ((size_t)w * h));
+}
+
+/* Grow box a to also hold box b. */
+static void
+unite(int a[4], const int b[4])
+{
+	int x1, y1;
+
+	x1 = a[0] + a[2] > b[0] + b[2] ? a[0] + a[2] : b[0] + b[2];
+	y1 = a[1] + a[3] > b[1] + b[3] ? a[1] + a[3] : b[1] + b[3];
+	a[0] = a[0] < b[0] ? a[0] : b[0];
+	a[1] = a[1] < b[1] ? a[1] : b[1];
+	a[2] = x1 - a[0];
+	a[3] = y1 - a[1];
 }
 
 /* Nothing would ever be seen there, say so. */
@@ -1341,16 +1440,19 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
     const regex_t *re, int interval, int cooldown)
 {
 	struct pollfd pfd;
-	uint8_t *cur, *prev, *bcur = NULL, *bprev = NULL, *tmp;
+	uint8_t *cur, *prev, *seen, *base, *bcur = NULL, *bprev = NULL, *tmp;
 	size_t len, blen = 0;
 	char *lasttext = NULL;
 	long long t, changed = 0, nextreq = 0, quiet = 0;
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
-	int unread = 0;
+	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
+	int span = 0;
+	int part[4], last[4];
 
 	len = (size_t)toast->w * toast->h;
-	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL)
+	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
+	    (seen = malloc(len)) == NULL || (base = malloc(len)) == NULL)
 		fatal("malloc");
 	if (badge != NULL) {
 		blen = (size_t)badge->w * badge->h;
@@ -1452,13 +1554,65 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		}
 
 		/*
-		 * Toasts slide in, only read the area once it stayed the
-		 * same for interval seconds.
+		 * Toasts slide in, only look at the area once it stayed the
+		 * same for interval seconds. base is the area without a
+		 * toast, seen the area at the last look.
+		 *
+		 * - The first time, read all of it.
+		 * - A toast on screen and the area back to base: it is gone.
+		 * - No toast on screen: a new one covers much of the area or at
+		 *   least two text lines. A smaller change, such as a line in
+		 *   a window underneath, is not read; such changes add up
+		 *   against base until they are.
+		 * - Otherwise read the part that changed, with the toast read
+		 *   before so that a replacement keeps the unchanged header.
+		 *
+		 * When no toast to forward was read, the area becomes base.
 		 */
 		if (unread && t - changed >= interval * 1000LL) {
 			unread = 0;
-			toast_seen(ocr(prev, toast->w, toast->h), re,
-			    &lasttext);
+			doread = 0;
+			if (!read) {
+				part[0] = part[1] = 0;
+				part[2] = toast->w;
+				part[3] = toast->h;
+				pct = 100;
+				memcpy(base, prev, len);
+				doread = 1;
+			} else if (showing && compare(prev, base, toast->w,
+			    toast->h, part, &solid, &span) < MINCHANGE &&
+			    span < MINHEIGHT) {
+				debug("toast gone");
+				showing = 0;
+				/* the same text again is a new toast */
+				free(lasttext);
+				lasttext = NULL;
+			} else {
+				pct = compare(prev, showing ? seen : base,
+				    toast->w, toast->h, part, &solid, &span);
+				if (showing) {
+					unite(part, last);
+					doread = 1;
+				} else if (pct >= MINCHANGE ||
+				    span >= MINHEIGHT)
+					doread = 1;
+				else
+					debug("toast area %d%% different over "
+					    "%d rows, not read", pct, span);
+			}
+			if (doread) {
+				debug("toast area %d%% different, reading "
+				    "%dx%d at %d,%d", pct, part[2], part[3],
+				    part[0], part[1]);
+				read = 1;
+				showing = toast_seen(ocr(prev, toast->w, part),
+				    re, &lasttext);
+				if (showing)
+					memcpy(last, part, sizeof(last));
+				else
+					memcpy(base, prev, len);
+			}
+			memcpy(seen, prev, len);
 		}
 	}
 }
