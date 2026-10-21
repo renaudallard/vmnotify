@@ -1940,6 +1940,12 @@ main(int argc, char *argv[])
 	for (k = 0; k < NKEYS; k++)
 		if (opt[k] == NULL)
 			opt[k] = rc[k];
+	/* VNC_PASSWORD won, the password of the file is not needed */
+	if (envpw != NULL && rc[K_PASSWORD] != NULL) {
+		explicit_bzero(rc[K_PASSWORD], strlen(rc[K_PASSWORD]));
+		free(rc[K_PASSWORD]);
+		rc[K_PASSWORD] = NULL;
+	}
 
 	if (opt[K_BADGE] != NULL) {
 		parse_region(opt[K_BADGE], &badge);
