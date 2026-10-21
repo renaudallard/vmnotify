@@ -1400,9 +1400,9 @@ readrc(char *rc[NKEYS])
 			if (strlen(keywords[k]) == klen &&
 			    strncmp(p, keywords[k], klen) == 0)
 				break;
+		/* the line may hold the password, do not show it */
 		if (k == NKEYS)
-			fatalx("%s:%d: unknown keyword %.*s", path, lineno,
-			    (int)klen, p);
+			fatalx("%s:%d: unknown keyword", path, lineno);
 		p += klen;
 		p += strspn(p, " \t");
 		end = p + strlen(p);
