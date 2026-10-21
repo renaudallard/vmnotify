@@ -472,8 +472,13 @@ vread(struct vnc *v, void *buf, size_t len)
 static void
 vwrite(struct vnc *v, const void *buf, size_t len)
 {
-	if (writeall(v->fd, buf, len) == -1)
+	if (writeall(v->fd, buf, len) == -1) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+			fatalx("server timed out, it stopped reading");
+		if (errno == EPIPE || errno == ECONNRESET)
+			fatalx("connection closed by server");
 		fatal("write");
+	}
 }
 
 static void
