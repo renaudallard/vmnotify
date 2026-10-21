@@ -98,7 +98,7 @@ A static binary can be built with musl:
 
 ## Usage
 
-    vmnotify [-dhv] [-b x,y,w,h] [-c sec] [-i sec] [-m regex] [-s file]
+    vmnotify [-dhVv] [-b x,y,w,h] [-c sec] [-i sec] [-m regex] [-s file]
              [-t x,y,w,h] [server]
 
     -b x,y,w,h  watch this taskbar icon for badge changes
@@ -106,13 +106,16 @@ A static binary can be built with musl:
                 (default: 30)
     -d          run in the background, log to syslog and start again 30
                 seconds after any error, such as the VM being powered off
-    -h          show a summary of the options and of ~/.vmnotifyrc
+    -h          show the version and a summary of the options and of
+                ~/.vmnotifyrc
     -i sec      read the toast area once it did not change for sec
                 seconds (default: 1)
     -m regex    only forward toasts whose text matches the case insensitive
                 extended regex (default: teams|outlook|firefox)
     -s file     save a screenshot of the VM to file as PPM and exit
     -t x,y,w,h  toast area (default: -420,-430,420,380)
+    -V          log every step to stderr (syslog with -d), the VNC
+                protocol included, but never the password; implies -v
     -v          print what is read, to syslog with -d
     server      host, host:display or host::port, IPv6 addresses in
                 brackets (default: 127.0.0.1::5900)
@@ -123,6 +126,10 @@ contains its process ID. A screenshot with `-s` can always be taken.
 
 Without `-d`, vmnotify exits on errors, including when the VNC connection
 fails or drops.
+
+When something does not work, `vmnotify -V -s shot.ppm` shows each step
+of the connection and where it stops; errors also name what vmnotify
+was waiting for.
 
 See vmnotify(1) for details.
 

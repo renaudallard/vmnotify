@@ -60,6 +60,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#define VERSION		"0.2.0"
+
 #define MAXDIM		8192	/* largest framebuffer side accepted */
 #define MAXREGION	4096	/* largest region side accepted */
 #define MAXOCR		65536	/* OCR output kept, the rest is dropped */
@@ -102,7 +104,10 @@ static const char *keywords[NKEYS] = {
 };
 
 static int verbose;
+static int debugging;
 static int logsyslog;
+/* what we are waiting for, for error messages */
+static const char *stage = "connecting";
 static volatile sig_atomic_t child;
 
 /* Logging, to stderr or with -d to syslog */
@@ -182,10 +187,33 @@ now(void)
 	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+/* -V, everything that happens, with a timestamp */
+static void __attribute__((__format__(__printf__, 1, 2)))
+debug(const char *fmt, ...)
+{
+	struct timespec ts;
+	va_list ap;
+	char msg[1024];
+
+	if (!debugging)
+		return;
+	va_start(ap, fmt);
+	vsnprintf(msg, sizeof(msg), fmt, ap);
+	va_end(ap);
+	if (logsyslog) {
+		syslog(LOG_DEBUG, "%s", msg);
+		return;
+	}
+	if (clock_gettime(CLOCK_REALTIME, &ts) == -1)
+		ts.tv_sec = ts.tv_nsec = 0;
+	fprintf(stderr, "vmnotify: %lld.%03ld %s\n", (long long)ts.tv_sec,
+	    ts.tv_nsec / 1000000, msg);
+}
+
 static void __attribute__((__noreturn__))
 usage(void)
 {
-	fprintf(stderr, "usage: vmnotify [-dhv] [-b x,y,w,h] [-c sec] "
+	fprintf(stderr, "usage: vmnotify [-dhVv] [-b x,y,w,h] [-c sec] "
 	    "[-i sec] [-m regex] [-s file]\n"
 	    "                [-t x,y,w,h] [server]\n");
 	exit(1);
@@ -194,7 +222,8 @@ usage(void)
 static void __attribute__((__noreturn__))
 help(void)
 {
-	printf("usage: vmnotify [-dhv] [-b x,y,w,h] [-c sec] [-i sec] "
+	printf("vmnotify %s\n"
+	    "usage: vmnotify [-dhVv] [-b x,y,w,h] [-c sec] [-i sec] "
 	    "[-m regex] [-s file]\n"
 	    "                [-t x,y,w,h] [server]\n"
 	    "\n"
@@ -214,6 +243,8 @@ help(void)
 	    "  -s file     save a screenshot of the VM as PPM to file and "
 	    "exit\n"
 	    "  -t x,y,w,h  toast area (-420,-430,420,380)\n"
+	    "  -V          log every step, the VNC protocol included, implies "
+	    "-v\n"
 	    "  -v          print what is read\n"
 	    "  server      host, host:display, host::port or [address]::port\n"
 	    "              (127.0.0.1::5900)\n"
@@ -234,7 +265,7 @@ help(void)
 	    "  toast x,y,w,h        like -t\n"
 	    "  badge x,y,w,h        like -b\n"
 	    "  interval sec         like -i\n"
-	    "  cooldown sec         like -c\n");
+	    "  cooldown sec         like -c\n", VERSION);
 	exit(0);
 }
 
@@ -426,10 +457,11 @@ vread(struct vnc *v, void *buf, size_t len)
 {
 	if (readall(v->fd, buf, len) == -1) {
 		if (errno == 0)
-			fatalx("connection closed by server");
+			fatalx("connection closed by server, waiting for %s",
+			    stage);
 		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			fatalx("server timed out");
-		fatal("read");
+			fatalx("server timed out, waiting for %s", stage);
+		fatal("read, waiting for %s", stage);
 	}
 }
 
@@ -522,6 +554,7 @@ vnc_resize(struct vnc *v, int w, int h)
 	v->w = w;
 	v->h = h;
 	v->gen++;
+	debug("screen size is now %dx%d", w, h);
 	return 1;
 }
 
@@ -535,6 +568,7 @@ vnc_connect(struct vnc *v, const char *host, const char *port)
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
+	debug("connecting to %s port %s", host, port);
 	if ((error = getaddrinfo(host, port, &hints, &res)) != 0)
 		fatalx("%s: %s", host, gai_strerror(error));
 	for (ai = res; ai != NULL; ai = ai->ai_next) {
@@ -558,7 +592,25 @@ vnc_connect(struct vnc *v, const char *host, const char *port)
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1 ||
 	    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == -1)
 		fatal("setsockopt");
+	debug("connected");
 	v->fd = fd;
+}
+
+/* Read the desktop name of ServerInit, for -V only. */
+static void
+vnc_name(struct vnc *v, uint32_t len)
+{
+	char name[256];
+	uint32_t i, n;
+
+	n = len < sizeof(name) ? len : sizeof(name) - 1;
+	vread(v, name, n);
+	vskip(v, len - n);
+	for (i = 0; i < n; i++)
+		if (!isprint((unsigned char)name[i]))
+			name[i] = '?';
+	name[n] = '\0';
+	debug("server name \"%s\"%s", name, n < len ? ", truncated" : "");
 }
 
 static void
@@ -577,9 +629,12 @@ vnc_auth(struct vnc *v, const char *password)
 			if ((unsigned char)password[i] & (1 << j))
 				key[i] |= 0x80 >> j;
 
+	stage = "the authentication challenge";
 	vread(v, challenge, sizeof(challenge));
 	des_encrypt(key, challenge, response);
 	des_encrypt(key, challenge + 8, response + 8);
+	/* neither is logged, they would allow guessing the password */
+	debug("got the challenge, sending the response");
 	vwrite(v, response, sizeof(response));
 	explicit_bzero(key, sizeof(key));
 }
@@ -590,6 +645,7 @@ vnc_handshake(struct vnc *v, const char *password)
 	uint8_t buf[24], types[255], type = 0, n;
 	int i, major, minor, none = 0, vncauth = 0;
 
+	stage = "the protocol version";
 	vread(v, buf, 12);
 	if (memcmp(buf, "RFB ", 4) != 0 || buf[7] != '.' || buf[11] != '\n')
 		fatalx("not a VNC server");
@@ -604,15 +660,18 @@ vnc_handshake(struct vnc *v, const char *password)
 		v->minor = 7;
 	else
 		v->minor = 3;
+	debug("server speaks RFB %d.%d, using 3.%d", major, minor, v->minor);
 	snprintf((char *)buf, sizeof(buf), "RFB 003.%03d\n", v->minor);
 	vwrite(v, buf, 12);
 
+	stage = "the security types";
 	if (v->minor >= 7) {
 		vread(v, &n, 1);
 		if (n == 0)
 			vnc_reason(v, "connection refused");
 		vread(v, types, n);
 		for (i = 0; i < n; i++) {
+			debug("server offers security type %u", types[i]);
 			if (types[i] == 1)
 				none = 1;
 			else if (types[i] == 2)
@@ -624,6 +683,7 @@ vnc_handshake(struct vnc *v, const char *password)
 			type = 1;
 		else
 			fatalx("no supported security type");
+		debug("using security type %u", type);
 		vwrite(v, &type, 1);
 	} else {
 		vread(v, buf, 4);
@@ -632,12 +692,15 @@ vnc_handshake(struct vnc *v, const char *password)
 		if (get32(buf) != 1 && get32(buf) != 2)
 			fatalx("unsupported security type %u", get32(buf));
 		type = get32(buf);
+		debug("server chose security type %u", type);
 	}
 
 	if (type == 2)
 		vnc_auth(v, password);
 	if (type == 2 || v->minor == 8) {
+		stage = "the authentication result";
 		vread(v, buf, 4);
+		debug("security result %u", get32(buf));
 		if (get32(buf) != 0) {
 			if (v->minor == 8)
 				vnc_reason(v, "authentication failed");
@@ -646,13 +709,20 @@ vnc_handshake(struct vnc *v, const char *password)
 	}
 
 	/* ClientInit, shared so other viewers are not disconnected */
+	debug("sending ClientInit, shared");
 	buf[0] = 1;
 	vwrite(v, buf, 1);
 
 	/* ServerInit */
+	stage = "the screen size";
 	vread(v, buf, 24);
+	debug("server screen %ux%u, native pixel format: %u bpp, depth %u, "
+	    "%s endian, %s, max %u %u %u, shift %u %u %u", get16(buf),
+	    get16(buf + 2), buf[4], buf[5], buf[6] ? "big" : "little",
+	    buf[7] ? "true colour" : "colour map", get16(buf + 8),
+	    get16(buf + 10), get16(buf + 12), buf[14], buf[15], buf[16]);
 	vnc_resize(v, get16(buf), get16(buf + 2));
-	vskip(v, get32(buf + 20));
+	vnc_name(v, get32(buf + 20));
 
 	/* SetPixelFormat: 32 bits, little endian B G R X */
 	memset(buf, 0, 20);
@@ -666,6 +736,8 @@ vnc_handshake(struct vnc *v, const char *password)
 	buf[14] = 16;
 	buf[15] = 8;
 	buf[16] = 0;
+	debug("sending SetPixelFormat: 32 bpp, depth 24, little endian, "
+	    "true colour, max 255 255 255, shift 16 8 0");
 	vwrite(v, buf, 20);
 
 	/* SetEncodings: Raw and DesktopSize */
@@ -674,6 +746,7 @@ vnc_handshake(struct vnc *v, const char *password)
 	put16(buf + 2, 2);
 	put32(buf + 4, 0);
 	put32(buf + 8, (uint32_t)-223);
+	debug("sending SetEncodings: raw, desktop size");
 	vwrite(v, buf, 12);
 }
 
@@ -718,9 +791,13 @@ vnc_message(struct vnc *v)
 	case 0:		/* FramebufferUpdate */
 		vread(v, buf, 3);
 		n = get16(buf + 1);
+		debug("update with %d rectangles", n);
 		for (i = 0; i < n; i++) {
 			vread(v, buf, 12);
 			enc = (int32_t)get32(buf + 8);
+			debug("rectangle %ux%u at %u,%u, encoding %d",
+			    get16(buf + 4), get16(buf + 6), get16(buf),
+			    get16(buf + 2), enc);
 			if (enc == 0)
 				vnc_raw(v, get16(buf), get16(buf + 2),
 				    get16(buf + 4), get16(buf + 6));
@@ -734,12 +811,15 @@ vnc_message(struct vnc *v)
 		return resized ? 2 : 1;
 	case 1:		/* SetColourMapEntries */
 		vread(v, buf, 5);
+		debug("colour map with %u entries", get16(buf + 3));
 		vskip(v, (size_t)get16(buf + 3) * 6);
 		break;
 	case 2:		/* Bell */
+		debug("bell");
 		break;
 	case 3:		/* ServerCutText */
 		vread(v, buf, 7);
+		debug("clipboard text of %u bytes", get32(buf + 3));
 		vskip(v, get32(buf + 3));
 		break;
 	default:
@@ -804,6 +884,9 @@ vnc_request(struct vnc *v, int incremental, const int box[4])
 {
 	uint8_t req[10];
 
+	debug("requesting %s update of %dx%d at %d,%d",
+	    incremental ? "an incremental" : "a full", box[2], box[3], box[0],
+	    box[1]);
 	req[0] = 3;
 	req[1] = incremental;
 	put16(req + 2, box[0]);
@@ -837,6 +920,7 @@ vnc_refresh(struct vnc *v, const struct region *a, const struct region *b)
 		 */
 		while (!resized && v->got < need && tries++ < REFRESHES) {
 			vnc_request(v, 0, v->want);
+			stage = "a screen update";
 			while ((r = vnc_message(v)) == 0)
 				;
 			if (r == 2)
@@ -847,6 +931,10 @@ vnc_refresh(struct vnc *v, const struct region *a, const struct region *b)
 				if (vnc_message(v) == 2)
 					resized = 1;
 		}
+		if (!resized && v->got < need)
+			debug("only got %llu of %llu pixels after %d requests",
+			    (unsigned long long)v->got,
+			    (unsigned long long)need, REFRESHES);
 	} while (resized);
 }
 
@@ -1009,6 +1097,7 @@ ocr(const uint8_t *img, int w, int h)
 	uint8_t *big;
 	size_t len = 0, bigsz = (size_t)w * h * 4;
 	ssize_t n;
+	long long start;
 	pid_t pid;
 	int in[2], out[2], hlen;
 
@@ -1019,6 +1108,8 @@ ocr(const uint8_t *img, int w, int h)
 
 	if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1)
 		fatal("pipe");
+	debug("running tesseract on %dx%d", w * 2, h * 2);
+	start = now();
 	pid = spawn(argv, in[0], out[1]);
 	close(in[0]);
 	close(out[1]);
@@ -1049,6 +1140,8 @@ ocr(const uint8_t *img, int w, int h)
 	if (reap(pid, "tesseract") != 0)
 		text[0] = '\0';
 	tidy(text);
+	debug("tesseract took %lld ms, %zu bytes of text", now() - start,
+	    strlen(text));
 	return text;
 }
 
@@ -1089,6 +1182,7 @@ notify(char *summary, const char *body)
 	e = escape(body);
 	argv[4] = summary;
 	argv[5] = e;
+	debug("running notify-send, summary \"%s\"", summary);
 	reap(spawn(argv, -1, -1), "notify-send");
 	free(e);
 }
@@ -1220,6 +1314,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			dirty = 0;
 			crop(v, toast, cur);
 			if (fresh || memcmp(cur, prev, len) != 0) {
+				debug("toast area changed");
 				tmp = prev;
 				prev = cur;
 				cur = tmp;
@@ -1227,6 +1322,10 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			}
 			if (badge != NULL) {
 				crop(v, badge, bcur);
+				if (!fresh && memcmp(bcur, bprev, blen) != 0 &&
+				    t < quiet)
+					debug("taskbar icon changed during the "
+					    "cooldown");
 				if (!fresh && memcmp(bcur, bprev, blen) != 0 &&
 				    t >= quiet) {
 					show("taskbar icon", "changed");
@@ -1321,6 +1420,7 @@ readrc(char *rc[NKEYS])
 		}
 		if ((rc[k] = strndup(p, end - p)) == NULL)
 			fatal("strndup");
+		debug("%s:%d sets %s", path, lineno, keywords[k]);
 	}
 	if (ferror(fp))
 		fatal("%s", path);
@@ -1347,6 +1447,7 @@ lock(void)
 		fatalx("neither XDG_RUNTIME_DIR nor HOME is set");
 	if (n < 0 || (size_t)n >= sizeof(path))
 		fatalx("lock file path is too long");
+	debug("lock file %s", path);
 	if ((fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600)) == -1)
 		fatal("%s", path);
 	if (flock(fd, LOCK_EX | LOCK_NB) == -1) {
@@ -1414,6 +1515,7 @@ supervise(void)
 		}
 		child = pid;
 		sigprocmask(SIG_SETMASK, &old, NULL);
+		debug("started watcher %ld", (long)pid);
 
 		while (waitpid(pid, &status, 0) == -1)
 			if (errno != EINTR)
@@ -1522,7 +1624,7 @@ main(int argc, char *argv[])
 	signal(SIGCHLD, SIG_DFL);
 
 	/* + makes glibc stop at the server like musl does */
-	while ((ch = getopt(argc, argv, "+b:c:dhi:m:s:t:v")) != -1) {
+	while ((ch = getopt(argc, argv, "+b:c:dhi:m:s:t:Vv")) != -1) {
 		switch (ch) {
 		case 'b':
 			opt[K_BADGE] = optarg;
@@ -1547,6 +1649,10 @@ main(int argc, char *argv[])
 		case 't':
 			opt[K_TOAST] = optarg;
 			break;
+		case 'V':
+			debugging = 1;
+			verbose = 1;
+			break;
 		case 'v':
 			verbose = 1;
 			break;
@@ -1562,6 +1668,7 @@ main(int argc, char *argv[])
 		opt[K_SERVER] = argv[0];
 	if (dflag && shot != NULL)
 		fatalx("-d and -s cannot be used together");
+	debug("vmnotify %s", VERSION);
 
 	/* the environment wins over the file, empty means unset */
 	if ((p = getenv("VNC_PASSWORD")) != NULL && *p != '\0') {
@@ -1599,6 +1706,15 @@ main(int argc, char *argv[])
 		regerror(error, &re, msg, sizeof(msg));
 		fatalx("match: %s", msg);
 	}
+
+	debug("server %s port %s, toast %d,%d,%d,%d, interval %d, match %s",
+	    host, port, toast.x, toast.y, toast.w, toast.h, interval,
+	    opt[K_MATCH]);
+	if (bp != NULL)
+		debug("badge %d,%d,%d,%d, cooldown %d", bp->x, bp->y, bp->w,
+		    bp->h, cooldown);
+	debug("password %s", opt[K_PASSWORD] == NULL ? "not set" :
+	    envpw != NULL ? "from VNC_PASSWORD" : "from ~/.vmnotifyrc");
 
 	signal(SIGPIPE, SIG_IGN);
 	setvbuf(stdout, NULL, _IOLBF, 0);

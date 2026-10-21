@@ -30,7 +30,7 @@
 .Nd forward Windows VM notifications to the Linux desktop
 .Sh SYNOPSIS
 .Nm vmnotify
-.Op Fl dhv
+.Op Fl dhVv
 .Op Fl b Ar x,y,w,h
 .Op Fl c Ar sec
 .Op Fl i Ar sec
@@ -101,7 +101,7 @@ Whenever watching stops on an error, for example because the virtual
 machine is powered off or the password is wrong, it starts again after
 30 seconds.
 .It Fl h
-Show a summary of the options and of
+Show the version and a summary of the options and of
 .Pa ~/.vmnotifyrc ,
 then exit.
 .It Fl i Ar sec
@@ -128,6 +128,21 @@ The toast area.
 The default is
 .Ql -420,-430,420,380 ,
 which fits Windows 10 and 11 at 100% display scaling.
+.It Fl V
+Log every step with a timestamp on standard error, or with
+.Fl d
+to
+.Xr syslog 3 :
+the settings in use, the VNC protocol exchange, the native pixel format
+of the server, every update request and update received, and every run
+of
+.Xr tesseract 1
+and
+.Xr notify-send 1 .
+The password and the authentication challenge and response are never
+logged.
+Implies
+.Fl v .
 .It Fl v
 Print the text read from the toast area and taskbar icon changes on
 standard output, or with
