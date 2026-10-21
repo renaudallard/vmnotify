@@ -81,9 +81,8 @@ struct vnc {
 	int		 minor;
 	int		 w, h;
 	unsigned int	 gen;		/* bumped on screen size changes */
-	uint64_t	 got;		/* pixels received, see vnc_refresh() */
-	int		 want[4];	/* area counted in got */
 	uint8_t		*fb;		/* w * h pixels, B G R X */
+	uint8_t		*got;		/* w * h bits, pixels received */
 };
 
 /* Settings from the command line or ~/.vmnotifyrc, kept as strings. */
@@ -539,21 +538,56 @@ vnc_reason(struct vnc *v, const char *what)
 	fatalx("%s: %s", what, buf);
 }
 
-/* Return 1 if the size changed, the screen is then blank. */
-static int
+/* A new size leaves the screen blank and nothing of it received. */
+static void
 vnc_resize(struct vnc *v, int w, int h)
 {
 	if (w <= 0 || h <= 0 || w > MAXDIM || h > MAXDIM)
 		fatalx("unsupported screen size %dx%d", w, h);
 	if (v->fb != NULL && w == v->w && h == v->h)
-		return 0;
+		return;
 	free(v->fb);
-	if ((v->fb = calloc((size_t)w * h, 4)) == NULL)
+	free(v->got);
+	if ((v->fb = calloc((size_t)w * h, 4)) == NULL ||
+	    (v->got = calloc(((size_t)w * h + 7) / 8, 1)) == NULL)
 		fatal("calloc");
 	v->w = w;
 	v->h = h;
 	v->gen++;
 	debug("screen size is now %dx%d", w, h);
+}
+
+/* Note the pixels of a rectangle as received, clipped to the screen. */
+static void
+mark(struct vnc *v, int x, int y, int w, int h)
+{
+	size_t i;
+	int x1, y1, j, k;
+
+	x1 = x + w < v->w ? x + w : v->w;
+	y1 = y + h < v->h ? y + h : v->h;
+	for (j = y; j < y1; j++) {
+		for (k = x; k < x1; k++) {
+			i = (size_t)j * v->w + k;
+			v->got[i / 8] |= 1 << (i % 8);
+		}
+	}
+}
+
+/* Return 1 if every pixel of box was received. */
+static int
+covered(const struct vnc *v, const int box[4])
+{
+	size_t i;
+	int j, k;
+
+	for (j = box[1]; j < box[1] + box[3]; j++) {
+		for (k = box[0]; k < box[0] + box[2]; k++) {
+			i = (size_t)j * v->w + k;
+			if (!(v->got[i / 8] & (1 << (i % 8))))
+				return 0;
+		}
+	}
 	return 1;
 }
 
@@ -754,15 +788,9 @@ vnc_raw(struct vnc *v, int x, int y, int w, int h)
 {
 	static uint8_t row[65535 * 4];
 	size_t ncol;
-	int i, x0, y0, x1, y1;
+	int i;
 
-	/* count what falls in the area vnc_refresh() waits for */
-	x0 = x > v->want[0] ? x : v->want[0];
-	y0 = y > v->want[1] ? y : v->want[1];
-	x1 = x + w < v->want[0] + v->want[2] ? x + w : v->want[0] + v->want[2];
-	y1 = y + h < v->want[1] + v->want[3] ? y + h : v->want[1] + v->want[3];
-	if (x1 > x0 && y1 > y0)
-		v->got += (uint64_t)(x1 - x0) * (y1 - y0);
+	mark(v, x, y, w, h);
 
 	/* Rectangles may stick out of the screen, keep what is inside. */
 	ncol = x < v->w ? (size_t)(w < v->w - x ? w : v->w - x) : 0;
@@ -774,16 +802,13 @@ vnc_raw(struct vnc *v, int x, int y, int w, int h)
 	}
 }
 
-/*
- * Read one server message. Return 1 for a framebuffer update, 2 for one
- * that resized the screen and 0 for anything else.
- */
+/* Read one server message, return 1 if it was a framebuffer update. */
 static int
 vnc_message(struct vnc *v)
 {
 	uint8_t type, buf[12];
 	int32_t enc;
-	int i, n, resized = 0;
+	int i, n;
 
 	vread(v, &type, 1);
 	switch (type) {
@@ -800,14 +825,12 @@ vnc_message(struct vnc *v)
 			if (enc == 0)
 				vnc_raw(v, get16(buf), get16(buf + 2),
 				    get16(buf + 4), get16(buf + 6));
-			else if (enc == -223) {
-				if (vnc_resize(v, get16(buf + 4),
-				    get16(buf + 6)))
-					resized = 1;
-			} else
+			else if (enc == -223)
+				vnc_resize(v, get16(buf + 4), get16(buf + 6));
+			else
 				fatalx("unexpected encoding %d", enc);
 		}
-		return resized ? 2 : 1;
+		return 1;
 	case 1:		/* SetColourMapEntries */
 		vread(v, buf, 5);
 		debug("colour map with %u entries", get16(buf + 3));
@@ -900,41 +923,34 @@ static void
 vnc_refresh(struct vnc *v, const struct region *a, const struct region *b)
 {
 	struct pollfd pfd;
-	uint64_t need;
-	int r, resized, tries = 0;
+	int box[4], tries;
 
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
+	memset(v->got, 0, ((size_t)v->w * v->h + 7) / 8);
 
-	/* After a resize the screen is blank, ask for all of it again. */
-	do {
-		area(v, a, b, v->want);
-		need = (uint64_t)v->want[2] * v->want[3];
-		v->got = 0;
-		resized = 0;
+	/*
+	 * Some servers answer with a part of the area only, ask again until
+	 * all of it came or REFRESHES requests were made. A resize starts
+	 * over by itself, it empties v->got.
+	 */
+	for (tries = 0; tries < REFRESHES; tries++) {
+		area(v, a, b, box);
+		if (covered(v, box))
+			return;
+		vnc_request(v, 0, box);
+		stage = "a screen update";
+		while (vnc_message(v) == 0)
+			;
 
-		/*
-		 * Some servers answer with a part of the area only, ask
-		 * again until all of it came or REFRESHES requests were made.
-		 */
-		while (!resized && v->got < need && tries++ < REFRESHES) {
-			vnc_request(v, 0, v->want);
-			stage = "a screen update";
-			while ((r = vnc_message(v)) == 0)
-				;
-			if (r == 2)
-				resized = 1;
-
-			/* Catch up with anything else already sent. */
-			while (poll(&pfd, 1, 0) > 0)
-				if (vnc_message(v) == 2)
-					resized = 1;
-		}
-		if (!resized && v->got < need)
-			debug("only got %llu of %llu pixels after %d requests",
-			    (unsigned long long)v->got,
-			    (unsigned long long)need, REFRESHES);
-	} while (resized);
+		/* Catch up with anything else already sent. */
+		while (poll(&pfd, 1, 0) > 0)
+			vnc_message(v);
+	}
+	area(v, a, b, box);
+	if (!covered(v, box))
+		debug("only part of the area came after %d requests",
+		    REFRESHES);
 }
 
 /* Screen handling */
@@ -1295,12 +1311,11 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		/* after a resize the screen is blank until filled again */
 		if (v->gen != gen) {
 			gen = v->gen;
-			area(v, toast, badge, v->want);
-			v->got = 0;
 			filling = 1;
 		}
 		if (filling) {
-			if (v->got < (uint64_t)v->want[2] * v->want[3])
+			area(v, toast, badge, box);
+			if (!covered(v, box))
 				continue;
 			filling = 0;
 			fresh = 1;
@@ -1727,6 +1742,7 @@ main(int argc, char *argv[])
 		screenshot(&v, shot);
 		close(v.fd);
 		free(v.fb);
+		free(v.got);
 		regfree(&re);
 		if (envpw != NULL) {
 			explicit_bzero(envpw, strlen(envpw));
