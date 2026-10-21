@@ -1,0 +1,10 @@
+[Unit]
+Description=Forward Windows VM notifications to the desktop
+
+[Service]
+ExecStart=/usr/local/bin/vmnotify
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

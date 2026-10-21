@@ -1,0 +1,268 @@
+.\" Copyright (c) 2026, Renaud Allard <renaud@allard.it>
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions are met:
+.\"
+.\" 1. Redistributions of source code must retain the above copyright notice,
+.\"    this list of conditions and the following disclaimer.
+.\"
+.\" 2. Redistributions in binary form must reproduce the above copyright notice,
+.\"    this list of conditions and the following disclaimer in the documentation
+.\"    and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+.\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+.\" LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"
+.Dd October 21, 2026
+.Dt VMNOTIFY 1
+.Os
+.Sh NAME
+.Nm vmnotify
+.Nd forward Windows VM notifications to the Linux desktop
+.Sh SYNOPSIS
+.Nm vmnotify
+.Op Fl dhv
+.Op Fl b Ar x,y,w,h
+.Op Fl c Ar sec
+.Op Fl i Ar sec
+.Op Fl m Ar regex
+.Op Fl s Ar file
+.Op Fl t Ar x,y,w,h
+.Op Ar server
+.Sh DESCRIPTION
+.Nm
+reads the screen of a VMware Workstation virtual machine through the VNC
+server built into VMware and turns Windows notifications into desktop
+notifications on the host.
+Nothing runs inside the guest.
+.Pp
+At every interval set with
+.Fl i ,
+the whole guest screen is requested.
+When the toast area changed and then stayed the same for one interval,
+which skips the slide in animation of toasts, it is converted to grey,
+scaled up twice and passed to
+.Xr tesseract 1 .
+The area is also read once at start, so a toast already on screen is
+forwarded.
+If the recognised text matches
+.Ar regex ,
+its first line is sent as summary and the remaining lines as body with
+.Xr notify-send 1 .
+The same text is only sent once while it stays on screen.
+.Pp
+With
+.Fl b ,
+a taskbar icon is watched as well.
+Any change of its pixels, such as a badge appearing or the icon flashing,
+sends a
+.Dq Taskbar icon changed
+notification.
+.Pp
+Only one
+.Nm
+watches at a time, a second one exits with an error.
+Taking a screenshot with
+.Fl s
+is always possible.
+.Pp
+The options are as follows:
+.Bl -tag -width Ds
+.It Fl b Ar x,y,w,h
+Watch the
+.Ar w
+by
+.Ar h
+pixels at
+.Ar x , Ns Ar y
+for changes.
+.It Fl c Ar sec
+Ignore changes of the taskbar icon for
+.Ar sec
+seconds after a notification.
+The default is 30.
+.It Fl d
+Run in the background and log to
+.Xr syslog 3 .
+Whenever watching stops on an error, for example because the virtual
+machine is powered off or the password is wrong, it starts again after
+30 seconds.
+.It Fl h
+Show a summary of the options and of
+.Pa ~/.vmnotifyrc ,
+then exit.
+.It Fl i Ar sec
+Look at the screen every
+.Ar sec
+seconds.
+The default is 2.
+.It Fl m Ar regex
+Only forward toasts whose text matches the case insensitive extended
+regular expression
+.Ar regex .
+The default is
+.Ql teams|outlook|firefox .
+.It Fl s Ar file
+Save the guest screen to
+.Ar file
+as a binary PPM image and exit.
+This helps to find the coordinates for
+.Fl b
+and
+.Fl t .
+.It Fl t Ar x,y,w,h
+The toast area.
+The default is
+.Ql -420,-430,420,380 ,
+which fits Windows 10 and 11 at 100% display scaling.
+.It Fl v
+Print the text read from the toast area and taskbar icon changes on
+standard output, or with
+.Fl d
+to
+.Xr syslog 3 .
+.El
+.Pp
+In regions, a negative
+.Ar x
+or
+.Ar y
+counts from the right or bottom edge of the screen.
+.Pp
+.Ar server
+is
+.Ar host ,
+.Ar host : Ns Ar display
+or
+.Ar host :: Ns Ar port .
+An IPv6 address is written in brackets.
+The default is
+.Ql 127.0.0.1::5900 .
+.Pp
+Only the RFB security types None and VNC authentication are supported,
+which is what VMware Workstation offers.
+.Sh ENVIRONMENT
+.Bl -tag -width XDG_RUNTIME_DIR
+.It Ev VNC_PASSWORD
+Password for the VNC server, used instead of the one in
+.Pa ~/.vmnotifyrc .
+It is removed from the environment of the commands
+.Nm
+runs.
+.It Ev XDG_RUNTIME_DIR
+Directory for the lock file.
+.El
+.Pp
+.Ev OMP_THREAD_LIMIT
+is set to 1 for
+.Xr tesseract 1 ,
+whose threads make recognising a small image much slower.
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa ~/.vmnotifyrc
+Settings, one
+.Dq Ar keyword value
+per line.
+Empty lines and lines starting with
+.Ql #
+are ignored, as are blanks around the value.
+A later line for the same keyword replaces an earlier one, and command
+line options take precedence over the file.
+The file must be owned by the user and not be accessible by anyone else.
+The keywords are:
+.Pp
+.Bl -tag -width "password secret" -compact
+.It Cm password Ar secret
+Password for the VNC server.
+.It Cm match Ar regex
+Like
+.Fl m .
+.It Cm server Ar server
+Like the
+.Ar server
+argument.
+.It Cm toast Ar x,y,w,h
+Like
+.Fl t .
+.It Cm badge Ar x,y,w,h
+Like
+.Fl b .
+.It Cm interval Ar sec
+Like
+.Fl i .
+.It Cm cooldown Ar sec
+Like
+.Fl c .
+.El
+.It Pa $XDG_RUNTIME_DIR/vmnotify.lock
+Locked while
+.Nm
+watches, holds its process ID.
+.Pa ~/.vmnotify.lock
+is used when
+.Ev XDG_RUNTIME_DIR
+is not set.
+.El
+.Sh EXIT STATUS
+.Nm
+exits 0 after
+.Fl h
+or
+.Fl s
+and 1 on error.
+Without
+.Fl d ,
+that includes the connection to the VNC server failing or being closed.
+.Sh EXAMPLES
+A
+.Pa ~/.vmnotifyrc
+forwarding Teams and Outlook only:
+.Bd -literal -offset indent
+password secret
+match teams|outlook
+badge 640,-40,48,40
+.Ed
+.Pp
+Create it with the right permissions first:
+.Bd -literal -offset indent
+$ install -m 600 /dev/null ~/.vmnotifyrc
+.Ed
+.Pp
+Find the regions on a screenshot:
+.Bd -literal -offset indent
+$ vmnotify -s shot.ppm
+.Ed
+.Pp
+Check what is read, then run in the background:
+.Bd -literal -offset indent
+$ vmnotify -v
+$ vmnotify -d
+.Ed
+.Sh SEE ALSO
+.Xr notify-send 1 ,
+.Xr tesseract 1
+.Sh AUTHORS
+.An Renaud Allard Aq Mt renaud@allard.it
+.Sh CAVEATS
+The VNC server of VMware Workstation may listen on all addresses.
+Anyone who can reach it can see and control the virtual machine, so the
+port should be blocked in the host firewall.
+.Pp
+A toast is only read once the toast area stopped changing for one
+interval.
+If something keeps changing behind a translucent toast, such as a video,
+it is not read.
+.Pp
+Any window in the toast area whose text matches
+.Ar regex
+triggers a notification, and the taskbar icon also changes when its
+badge goes away or the mouse hovers over it.

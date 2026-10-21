@@ -1,0 +1,40 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: |
+          make CC=musl-gcc LDFLAGS="-static -s"
+          file vmnotify | grep -E 'statically linked|static-pie linked'
+
+      - name: Package
+        run: |
+          d=vmnotify-${GITHUB_REF_NAME#v}-linux-amd64
+          mkdir "$d"
+          cp vmnotify vmnotify.1 vmnotify.service README.md LICENSE "$d"
+          tar -czf "$d.tar.gz" "$d"
+          sha256sum "$d.tar.gz" > "$d.tar.gz.sha256"
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "vmnotify ${GITHUB_REF_NAME#v}" \
+              --notes "Static Linux amd64 build. Needs tesseract and notify-send on the host." \
+              vmnotify-*-linux-amd64.tar.gz*
