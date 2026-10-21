@@ -48,7 +48,7 @@ Static Linux amd64 binaries are attached to the
     tar xzf vmnotify-*-linux-amd64.tar.gz
     cd vmnotify-*-linux-amd64
     sudo install -m 755 vmnotify /usr/local/bin
-    sudo install -m 644 vmnotify.1 /usr/local/share/man/man1
+    sudo install -D -m 644 vmnotify.1 /usr/local/share/man/man1/vmnotify.1
 
 Or build from source with a C compiler and make:
 
