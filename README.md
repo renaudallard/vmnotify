@@ -15,6 +15,10 @@ Two things are watched:
   run through tesseract, and if the text matches a regex (default
   `teams|outlook|firefox`) it is sent with notify-send, the first line as
   summary and the rest as body. The area is also read once at start.
+  A toast is sent once while it stays on screen. Lines are compared by
+  their letters and digits and count as the same when at most a quarter
+  of them differs, so stray characters read from an icon or a button
+  showing under the mouse do not make it new.
 
   To save work, a change is only read when it covers at least 15% of the
   area or two lines of text, so a line changing in a window underneath

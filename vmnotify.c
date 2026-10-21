@@ -1303,11 +1303,133 @@ show(const char *what, const char *text)
 		printf("%s: %s\n", what, buf);
 }
 
+/*
+ * OCR text is compared line by line, by the ASCII letters and digits of
+ * each line, ignoring case. Two lines are alike when at most a quarter
+ * of them differs, so that stray characters read from an icon or a
+ * button, which change with what else is read, do not count.
+ */
+
+#define KEYMAX		128	/* characters of a line compared */
+
+static int
+ischar(char c)
+{
+	return isalnum((unsigned char)c);
+}
+
+static int
+iseol(char c)
+{
+	return c == '\0' || c == '\n';
+}
+
+/* Put in k the characters of the line at p, return how many. */
+static int
+key(const char *p, char k[KEYMAX])
+{
+	int n = 0;
+
+	for (; !iseol(*p) && n < KEYMAX; p++)
+		if (ischar(*p))
+			k[n++] = tolower((unsigned char)*p);
+	return n;
+}
+
+/*
+ * Return 1 if the lines starting at a and b are alike: the characters
+ * to change, add or remove to turn one into the other, their edit
+ * distance, are at most a quarter of the longer one.
+ */
+static int
+sameline(const char *a, const char *b)
+{
+	char ka[KEYMAX], kb[KEYMAX];
+	int d[KEYMAX + 1], diag, up, i, j, na, nb;
+
+	na = key(a, ka);
+	nb = key(b, kb);
+	for (j = 0; j <= nb; j++)
+		d[j] = j;
+	for (i = 1; i <= na; i++) {
+		diag = d[0];
+		d[0] = i;
+		for (j = 1; j <= nb; j++) {
+			up = d[j];
+			d[j] = diag + (ka[i - 1] != kb[j - 1]);
+			if (up + 1 < d[j])
+				d[j] = up + 1;
+			if (d[j - 1] + 1 < d[j])
+				d[j] = d[j - 1] + 1;
+			diag = up;
+		}
+	}
+	return 4 * d[nb] <= (na > nb ? na : nb);
+}
+
+/* The start of the line after the one at p, or NULL. */
+static char *
+after(char *p)
+{
+	if (p == NULL || (p = strchr(p, '\n')) == NULL)
+		return NULL;
+	return p + 1;
+}
+
+/* The first line from p holding a character, or NULL. */
+static char *
+keyed(char *p)
+{
+	char *q;
+
+	for (; p != NULL; p = after(p))
+		for (q = p; !iseol(*q); q++)
+			if (ischar(*q))
+				return p;
+	return NULL;
+}
+
+/*
+ * Return 1 if the lines of b, skipping those without characters, are the
+ * first ones of a. Put in end where the rest of a starts, NULL if
+ * nothing is left.
+ */
+static int
+prefix(char *a, char *b, char **end)
+{
+	char *p = keyed(a), *q = keyed(b);
+
+	if (q == NULL)
+		return 0;
+	for (; q != NULL; q = keyed(after(q))) {
+		if (p == NULL || !sameline(p, q))
+			return 0;
+		*end = after(p);
+		p = keyed(*end);
+	}
+	return 1;
+}
+
+/* Send text, the first line as summary and the rest as body. */
+static void
+forward(char *text)
+{
+	char *body;
+
+	if ((body = strchr(text, '\n')) == NULL) {
+		notify(text, "");
+		return;
+	}
+	*body = '\0';
+	notify(text, body + 1);
+	*body = '\n';
+}
+
 /* Return 1 if text is a toast to forward, sent or already sent. */
 static int
 toast_seen(char *text, const regex_t *re, char **last)
 {
-	char *body;
+	char *end;
 
 	show("toast area", text);
 	if (*text == '\0' || regexec(re, text, 0, NULL, 0) != 0) {
@@ -1316,21 +1438,14 @@ toast_seen(char *text, const regex_t *re, char **last)
 		free(text);
 		return 0;
 	}
-	if (*last != NULL && strcmp(text, *last) == 0) {
+	if (*last != NULL && prefix(*last, text, &end) &&
+	    keyed(end) == NULL) {
 		free(text);
 		return 1;
 	}
 	free(*last);
 	*last = text;
-
-	/* first line is the summary, the rest the body */
-	if ((body = strchr(text, '\n')) == NULL) {
-		notify(text, "");
-		return 1;
-	}
-	*body = '\0';
-	notify(text, body + 1);
-	*body = '\n';
+	forward(text);
 	return 1;
 }
 

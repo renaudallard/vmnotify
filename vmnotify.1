@@ -73,6 +73,10 @@ If the recognised text matches
 its first line is sent as summary and the remaining lines as body with
 .Xr notify-send 1 .
 The same text is only sent once while it stays on screen.
+Lines are compared by their ASCII letters and digits, ignoring case,
+and count as the same when at most a quarter of them differs, so that
+stray characters read from an icon, or from a button appearing when the
+mouse is over the toast, do not make it new.
 .Pp
 With
 .Fl b ,
