@@ -74,6 +74,7 @@
 #define KEEPIDLE	60	/* seconds idle before TCP keepalive probes */
 #define KEEPINTVL	10	/* seconds between probes */
 #define KEEPCNT		6	/* unanswered probes before giving up */
+#define AROUND		20	/* pixels on each side judging the background */
 #define REFRESHES	10	/* requests to get a full update covered */
 
 extern char **environ;
@@ -1089,6 +1090,45 @@ reap(pid_t pid, const char *name)
 	return 0;
 }
 
+/*
+ * Turn light text on a dark background, a dark toast or theme, into dark
+ * on light, in place. Tesseract no longer looks for inverted text and
+ * misses it next to dark on light text. The background of a pixel is
+ * the mean of the square of AROUND pixels on each side, from a summed
+ * area table. 32 bits are enough: 255 * MAXREGION * MAXREGION < 2^32.
+ */
+static void
+polarity(uint8_t *img, int w, int h)
+{
+	uint32_t *sum, s, n;
+	size_t sw = (size_t)w + 1;
+	int x, y, x0, y0, x1, y1;
+
+	if ((sum = calloc(sw * ((size_t)h + 1), sizeof(*sum))) == NULL)
+		fatal("calloc");
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++)
+			sum[(y + 1) * sw + x + 1] = img[(size_t)y * w + x] +
+			    sum[y * sw + x + 1] + sum[(y + 1) * sw + x] -
+			    sum[y * sw + x];
+	for (y = 0; y < h; y++) {
+		y0 = y - AROUND > 0 ? y - AROUND : 0;
+		y1 = y + AROUND + 1 < h ? y + AROUND + 1 : h;
+		for (x = 0; x < w; x++) {
+			x0 = x - AROUND > 0 ? x - AROUND : 0;
+			x1 = x + AROUND + 1 < w ? x + AROUND + 1 : w;
+			/* unsigned wrap cancels out, the result fits */
+			s = sum[y1 * sw + x1] - sum[y0 * sw + x1] -
+			    sum[y1 * sw + x0] + sum[y0 * sw + x0];
+			n = (uint32_t)(x1 - x0) * (y1 - y0);
+			if (s < 128 * n)
+				img[(size_t)y * w + x] = 255 -
+				    img[(size_t)y * w + x];
+		}
+	}
+	free(sum);
+}
+
 /* 2x bilinear upscale, small UI fonts OCR much better that way. */
 static void
 upscale(const uint8_t *in, int w, int h, uint8_t *out)
@@ -1140,16 +1180,20 @@ ocr(const uint8_t *img, int w, int h)
 {
 	char *argv[] = { "tesseract", "stdin", "stdout", NULL };
 	char hdr[64], *text, buf[4096];
-	uint8_t *big;
+	uint8_t *flat, *big;
 	size_t len = 0, bigsz = (size_t)w * h * 4;
 	ssize_t n;
 	long long start;
 	pid_t pid;
 	int in[2], out[2], hlen;
 
-	if ((big = malloc(bigsz)) == NULL || (text = malloc(MAXOCR)) == NULL)
+	if ((flat = malloc((size_t)w * h)) == NULL ||
+	    (big = malloc(bigsz)) == NULL || (text = malloc(MAXOCR)) == NULL)
 		fatal("malloc");
-	upscale(img, w, h, big);
+	memcpy(flat, img, (size_t)w * h);
+	polarity(flat, w, h);
+	upscale(flat, w, h, big);
+	free(flat);
 	hlen = snprintf(hdr, sizeof(hdr), "P5\n%d %d\n255\n", w * 2, h * 2);
 
 	if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1)
