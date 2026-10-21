@@ -1298,17 +1298,16 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
     const regex_t *re, int interval, int cooldown)
 {
 	struct pollfd pfd;
-	uint8_t *cur, *prev, *seen, *bcur = NULL, *bprev = NULL, *tmp;
+	uint8_t *cur, *prev, *bcur = NULL, *bprev = NULL, *tmp;
 	size_t len, blen = 0;
 	char *lasttext = NULL;
 	long long t, changed = 0, nextreq = 0, quiet = 0;
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
-	int ocred = 0;
+	int unread = 0;
 
 	len = (size_t)toast->w * toast->h;
-	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
-	    (seen = malloc(len)) == NULL)
+	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL)
 		fatal("malloc");
 	if (badge != NULL) {
 		blen = (size_t)badge->w * badge->h;
@@ -1388,6 +1387,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				prev = cur;
 				cur = tmp;
 				changed = t;
+				unread = 1;
 			}
 			if (badge != NULL) {
 				crop(v, badge, bcur);
@@ -1412,10 +1412,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		 * Toasts slide in, only read the area once it stayed the
 		 * same for interval seconds.
 		 */
-		if (t - changed >= interval * 1000LL &&
-		    (!ocred || memcmp(prev, seen, len) != 0)) {
-			memcpy(seen, prev, len);
-			ocred = 1;
+		if (unread && t - changed >= interval * 1000LL) {
+			unread = 0;
 			toast_seen(ocr(prev, toast->w, toast->h), re,
 			    &lasttext);
 		}
