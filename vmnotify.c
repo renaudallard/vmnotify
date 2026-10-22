@@ -1706,7 +1706,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		if (filling) {
 			area(v, toast, badge, box);
 			if (!covered(v, box)) {
-				if (fills < REFRESHES)
+				/* wait for the answer to the last request */
+				if (fills < REFRESHES || pending)
 					continue;
 				log_warnx("screen incomplete after %d "
 				    "requests, going on with what came",
