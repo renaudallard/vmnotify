@@ -80,6 +80,7 @@
 #define AROUND		20	/* pixels on each side judging the background */
 #define BLOCK		8	/* side of the blocks a toast fills */
 #define REFRESHES	10	/* requests to get a full update covered */
+#define GAP		24	/* blank rows between parts of one toast */
 
 extern char **environ;
 
@@ -1485,21 +1486,35 @@ toast_seen(char *text, const regex_t *re, char **last)
  * pixels differing by more than NOISE, and in span the height of the
  * box around them. Put in box the part to read.
  *
- * A toast whose background differs from what is underneath repaints a
- * solid rectangle. When the blocks of BLOCK pixels that mostly changed
- * cover three quarters of the changes, the box is around them, which
- * leaves out a text line changing underneath at the same time, and solid
- * is set. A toast on a window of the same colour only changes its text,
- * the box is then around all changes. Growing it would take in the cut
- * off bottom of text above the toast. It is the whole area when nothing
- * changed.
+ * Changed rows with at most GAP blank rows between them form bands, a
+ * toast or a stack of them is one. A toast whose background differs
+ * from what is underneath repaints a solid rectangle. When the blocks of
+ * BLOCK pixels that mostly changed cover three quarters of the box
+ * around the changes of the band with the most changes, the box is
+ * around them and solid is set. That leaves out a line changing in a
+ * window underneath, next to the toast or further away.
+ *
+ * A toast on a window of the same colour only changes its text, it may
+ * have fewer changes than a window scrolling above it. The box is then
+ * around all changes. Growing it would take in the cut off bottom of
+ * text above the toast. It is the whole area when nothing changed.
  */
+
+/* Return 1 if a pixel changed by more than NOISE. */
+static int
+differ(uint8_t a, uint8_t b)
+{
+	return a > b + NOISE || b > a + NOISE;
+}
+
 static int
 compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
     int *solid, int *span)
 {
-	size_t i, n = 0, nb;
+	size_t i, n = 0, nb, *rows, sum = 0, best = 0;
 	int *cnt, x, y, bw = w / BLOCK, bh = h / BLOCK;
+	int s0 = -1, last = 0, b0 = 0, b1 = 0;
+	int sx0 = w, sy0 = h, sx1 = 0, sy1 = 0;
 	int x0 = w, y0 = h, x1 = 0, y1 = 0;
 	int dx0 = w, dy0 = h, dx1 = 0, dy1 = 0;
 
@@ -1507,14 +1522,46 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 	if (w <= 0 || h <= 0)
 		fatalx("empty toast area");
 	nb = (size_t)bw * bh;
-	if ((cnt = calloc(nb > 0 ? nb : 1, sizeof(*cnt))) == NULL)
+	if ((cnt = calloc(nb > 0 ? nb : 1, sizeof(*cnt))) == NULL ||
+	    (rows = calloc(h, sizeof(*rows))) == NULL)
 		fatal("calloc");
-	for (y = 0; y < h; y++) {
+	for (i = 0, y = 0; y < h; y++) {
+		for (x = 0; x < w; x++, i++) {
+			if (!differ(a[i], b[i]))
+				continue;
+			rows[y]++;
+			sx0 = x < sx0 ? x : sx0;
+			sx1 = x + 1 > sx1 ? x + 1 : sx1;
+		}
+	}
+
+	for (y = 0; y <= h; y++) {
+		if (s0 >= 0 && (y == h || (rows[y] == 0 && y - last > GAP))) {
+			if (sum > best) {
+				best = sum;
+				b0 = s0;
+				b1 = last + 1;
+			}
+			s0 = -1;
+			sum = 0;
+		}
+		if (y < h && rows[y] > 0) {
+			if (s0 < 0)
+				s0 = y;
+			last = y;
+			sum += rows[y];
+			n += rows[y];
+			sy0 = y < sy0 ? y : sy0;
+			sy1 = y + 1;
+		}
+	}
+	free(rows);
+
+	for (y = b0; y < b1; y++) {
 		for (x = 0; x < w; x++) {
 			i = (size_t)y * w + x;
-			if (a[i] <= b[i] + NOISE && b[i] <= a[i] + NOISE)
+			if (!differ(a[i], b[i]))
 				continue;
-			n++;
 			x0 = x < x0 ? x : x0;
 			y0 = y < y0 ? y : y0;
 			x1 = x + 1 > x1 ? x + 1 : x1;
@@ -1535,7 +1582,7 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 	}
 	free(cnt);
 
-	*span = n > 0 ? y1 - y0 : 0;
+	*span = n > 0 ? sy1 - sy0 : 0;
 	*solid = dx0 < dx1 && 4 * (size_t)(dx1 - dx0) * (dy1 - dy0) >=
 	    3 * (size_t)(x1 - x0) * (y1 - y0);
 	if (*solid) {
@@ -1544,10 +1591,10 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 		box[2] = dx1 - dx0;
 		box[3] = dy1 - dy0;
 	} else if (n > 0) {
-		box[0] = x0;
-		box[1] = y0;
-		box[2] = x1 - x0;
-		box[3] = y1 - y0;
+		box[0] = sx0;
+		box[1] = sy0;
+		box[2] = sx1 - sx0;
+		box[3] = sy1 - sy0;
 	} else {
 		box[0] = box[1] = 0;
 		box[2] = w;

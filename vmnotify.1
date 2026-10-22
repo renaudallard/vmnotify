@@ -61,6 +61,8 @@ cost a recognition.
 Only the changed part is read: the solid rectangle a toast paints when
 its background differs from what is underneath, or else all changed
 pixels.
+For a solid rectangle, changes more than 24 blank rows away from it,
+such as a line changing higher up in a window underneath, are left out.
 It is converted to grey, light text on a dark background is turned dark
 on light, it is scaled up twice and passed to
 .Xr tesseract 1 .
@@ -310,6 +312,10 @@ it is not read.
 A toast that is not forwarded and then replaced by one that is, with
 only its first line differing, is not read.
 App icons and close buttons may add a few stray characters to the text.
+.Pp
+A window underneath whose content moves right next to the toast as it
+appears, such as a list of mails getting a new one, may add some of its
+text to the notification.
 .Pp
 Any window in the toast area whose text matches
 .Ar regex

@@ -24,7 +24,9 @@ Two things are watched:
   To save work, a change is only read when it covers at least 15% of the
   area or two lines of text, so a line changing in a window underneath
   is ignored, and a toast going away is noticed by the area looking like
-  it did before. Only colour differences count, never particular
+  it did before. When the toast paints its own background, changes away
+  from it, such as a line changing higher up in a window underneath, are
+  not read with it. Only colour differences count, never particular
   colours, so light and dark themes work alike, and light text on a dark
   toast is turned dark on light for tesseract.
 - optionally, a taskbar icon (for example Teams). When its pixels change,
@@ -193,6 +195,9 @@ Logs:
 - A toast that is not forwarded and then replaced by one that is, with
   only its first line differing, is not read.
 - App icons and close buttons may add a few stray characters to the text.
+- A window underneath whose content moves right next to the toast as it
+  appears, such as a list of mails getting a new one, may add some of its
+  text to the notification.
 - Any window in the bottom right corner whose text matches the regex
   triggers a notification, once per distinct text.
 - A taskbar icon also changes when the badge goes away or the mouse hovers
