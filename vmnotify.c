@@ -1436,6 +1436,18 @@ find(char *a, char *b, char **end)
 	return NULL;
 }
 
+/* Return 1 if the last lines of a are the first ones of b, see prefix(). */
+static int
+overlap(char *a, char *b, char **end)
+{
+	char *s;
+
+	for (s = keyed(a); s != NULL; s = keyed(after(s)))
+		if (prefix(b, s, end))
+			return 1;
+	return 0;
+}
+
 /* Send text, the first line as summary and the rest as body. */
 static void
 forward(char *text)
@@ -1474,8 +1486,15 @@ toast_seen(char *text, const regex_t *re, char **last)
 		return 1;
 	}
 
-	/* a toast stacked with the one sent before, only send the new one */
-	if (old != NULL && (start = find(text, old, &end)) != NULL) {
+	/*
+	 * A toast stacked with the ones sent before, or taking the place of
+	 * one that went away meanwhile: only send the new one.
+	 */
+	start = NULL;
+	if (old != NULL && (start = find(text, old, &end)) == NULL &&
+	    overlap(old, text, &end))
+		start = text;
+	if (start != NULL) {
 		len = start - text;
 		if ((rest = malloc(strlen(text) + 1)) == NULL)
 			fatal("malloc");
