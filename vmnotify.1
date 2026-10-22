@@ -72,8 +72,8 @@ The area is also read once at start, so a toast already on screen is
 forwarded.
 If the recognised text matches
 .Ar regex ,
-its first line is sent as summary and the remaining lines as body with
-.Xr notify-send 1 .
+its first line is sent as summary and the remaining lines as body in a
+desktop notification, over D-Bus.
 The same text is only sent once while it stays on screen.
 Lines are compared by their ASCII letters and digits, ignoring case,
 and count as the same when at most a quarter of them differs, so that
@@ -157,11 +157,9 @@ Log every step with a timestamp on standard error, or with
 to
 .Xr syslog 3 :
 the settings in use, the VNC protocol exchange, the native pixel format
-of the server, every update request and update received, and every run
-of
+of the server, every update request and update received, every run of
 .Xr tesseract 1
-and
-.Xr notify-send 1 .
+and every notification sent.
 The password and the authentication challenge and response are never
 logged.
 Implies
@@ -196,7 +194,16 @@ The default is
 Only the RFB security types None and VNC authentication are supported,
 which is what VMware Workstation offers.
 .Sh ENVIRONMENT
-.Bl -tag -width XDG_RUNTIME_DIR
+.Bl -tag -width DBUS_SESSION_BUS_ADDRESS
+.It Ev DBUS_SESSION_BUS_ADDRESS
+The D-Bus session bus notifications are sent on, as set by the desktop.
+Its first
+.Ql unix:path=
+or
+.Ql unix:abstract=
+address that can be reached is used.
+When it is not set,
+.Pa $XDG_RUNTIME_DIR/bus .
 .It Ev HOME
 Where
 .Pa .vmnotifyrc
@@ -210,7 +217,9 @@ It is removed from the environment of the commands
 .Nm
 runs.
 .It Ev XDG_RUNTIME_DIR
-Directory for the lock file.
+Directory for the lock file, and for the session bus when
+.Ev DBUS_SESSION_BUS_ADDRESS
+is not set.
 .El
 .Pp
 .Ev OMP_THREAD_LIMIT
@@ -299,7 +308,6 @@ $ vmnotify -v
 $ vmnotify -d
 .Ed
 .Sh SEE ALSO
-.Xr notify-send 1 ,
 .Xr tesseract 1
 .Sh AUTHORS
 .An Renaud Allard Aq Mt renaud@allard.it

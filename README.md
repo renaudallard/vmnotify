@@ -13,14 +13,14 @@ Two things are watched:
 - the toast area in the bottom right corner. When it changed and then
   stayed the same for one second (toasts slide in), the changed part is
   run through tesseract, and if the text matches a regex (default
-  `teams|outlook|firefox`) it is sent with notify-send, the first line as
-  summary and the rest as body. The area is also read once at start.
-  A toast is sent once while it stays on screen. Lines are compared by
-  their letters and digits and count as the same when at most a quarter
+  `teams|outlook|firefox`) it is sent as a desktop notification, the first
+  line as summary and the rest as body. The area is also read once at
+  start. A toast is sent once while it stays on screen. Lines are compared
+  by their letters and digits and count as the same when at most a quarter
   of them differs, so stray characters read from an icon or a button
-  showing under the mouse do not make it new. When a new toast stacks
-  with one already sent, or takes the place of one that went away, only
-  the lines of the new one are sent, if they match the regex.
+  showing under the mouse do not make it new. When a new toast stacks with
+  one already sent, or takes the place of one that went away, only the
+  lines of the new one are sent, if they match the regex.
 
   To save work, a change is only read when it covers at least 15% of the
   area or two lines of text, so a line changing in a window underneath
@@ -44,9 +44,13 @@ can run in the background by itself with `-d`.
 
 ## Requirements
 
-At run time, tesseract and notify-send. On Debian:
+At run time, tesseract. On Debian:
 
-    apt install tesseract-ocr libnotify-bin
+    apt install tesseract-ocr
+
+Notifications are sent over D-Bus to the notification service of the
+desktop, which every desktop environment has; notify-send is not
+needed.
 
 ## Installing
 
@@ -58,8 +62,8 @@ Static Linux amd64 binaries are attached to the
     sudo ./install.sh
 
 install.sh puts the binary and the manual page under `/usr/local`, or
-under the directory given as argument, and warns when tesseract or
-notify-send is missing. With another directory, adjust `ExecStart` in
+under the directory given as argument, and warns when tesseract is
+missing. With another directory, adjust `ExecStart` in
 vmnotify.service if you use it.
 
 Or build from source with a C compiler and make:
@@ -191,8 +195,7 @@ by anyone else.
     interval 1
     cooldown 30
 
-The password is removed from the environment of tesseract and
-notify-send.
+The password is removed from the environment of tesseract.
 
 ## Running under systemd
 

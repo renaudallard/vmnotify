@@ -60,7 +60,5 @@ install -m 644 vmnotify.1 "$prefix/share/man/man1/vmnotify.1"
 echo "installed $prefix/bin/vmnotify and $prefix/share/man/man1/vmnotify.1"
 
 # needed at run time, not to install
-for cmd in tesseract notify-send; do
-	command -v $cmd > /dev/null ||
-	    echo "warning: $cmd not found, install it (see README.md)" >&2
-done
+command -v tesseract > /dev/null ||
+    echo "warning: tesseract not found, install it (see README.md)" >&2

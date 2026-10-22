@@ -36,5 +36,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
               --title "vmnotify ${GITHUB_REF_NAME#v}" \
-              --notes "Static Linux amd64 build. Needs tesseract and notify-send on the host." \
+              --notes "Static Linux amd64 build. Needs tesseract on the host." \
               vmnotify-*-linux-amd64.tar.gz*

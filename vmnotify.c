@@ -30,7 +30,8 @@
  * The guest screen is read through the VNC server built into VMware
  * Workstation, so nothing has to run inside the guest. The toast area is
  * OCRed with tesseract when it changes and an optional taskbar icon is
- * watched for badge changes. Both end up as notify-send notifications.
+ * watched for badge changes. Both end up as desktop notifications, sent
+ * over D-Bus.
  */
 
 #define _GNU_SOURCE
@@ -40,6 +41,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 
 #include <netinet/in.h>
@@ -55,6 +57,7 @@
 #include <signal.h>
 #include <spawn.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,6 +83,8 @@
 #define AROUND		20	/* pixels on each side judging the background */
 #define BLOCK		8	/* side of the blocks a toast fills */
 #define REFRESHES	10	/* requests to get a full update covered */
+#define DBUSMAX		65536	/* largest D-Bus message part accepted */
+#define DBUSREPLIES	32	/* messages read waiting for a D-Bus reply */
 #define GAP		24	/* blank rows between parts of one toast */
 
 extern char **environ;
@@ -1056,15 +1061,12 @@ spawn(char *const argv[], int in, int out)
 	    POSIX_SPAWN_SETSIGDEF)) != 0 ||
 	    (error = posix_spawn_file_actions_init(&fa)) != 0)
 		goto fail;
-	if (in != -1 &&
-	    (error = posix_spawn_file_actions_adddup2(&fa, in,
-	    STDIN_FILENO)) != 0)
-		goto fail;
-	if (out != -1 &&
-	    ((error = posix_spawn_file_actions_adddup2(&fa, out,
+	if ((error = posix_spawn_file_actions_adddup2(&fa, in,
+	    STDIN_FILENO)) != 0 ||
+	    (error = posix_spawn_file_actions_adddup2(&fa, out,
 	    STDOUT_FILENO)) != 0 ||
 	    (error = posix_spawn_file_actions_addopen(&fa, STDERR_FILENO,
-	    "/dev/null", O_WRONLY, 0)) != 0))
+	    "/dev/null", O_WRONLY, 0)) != 0)
 		goto fail;
 	if ((error = posix_spawnp(&pid, argv[0], &fa, &attr, argv,
 	    environ)) != 0)
@@ -1162,6 +1164,51 @@ upscale(const uint8_t *in, int w, int h, uint8_t *out)
 	}
 }
 
+/*
+ * Replace the bytes of s that are not valid UTF-8 with '?', in place.
+ * D-Bus drops a client sending invalid strings, and text cut at MAXOCR
+ * may end in the middle of a character.
+ */
+static void
+utf8(char *s)
+{
+	unsigned char *p = (unsigned char *)s;
+	uint32_t c, min;
+	int i, n;
+
+	while (*p != '\0') {
+		if (*p < 0x80) {
+			p++;
+			continue;
+		}
+		if ((*p & 0xe0) == 0xc0) {
+			n = 1;
+			c = *p & 0x1f;
+			min = 0x80;
+		} else if ((*p & 0xf0) == 0xe0) {
+			n = 2;
+			c = *p & 0x0f;
+			min = 0x800;
+		} else if ((*p & 0xf8) == 0xf0) {
+			n = 3;
+			c = *p & 0x07;
+			min = 0x10000;
+		} else {
+			*p++ = '?';
+			continue;
+		}
+		/* a NUL is not a continuation byte, the loop stops on it */
+		for (i = 1; i <= n && (p[i] & 0xc0) == 0x80; i++)
+			c = c << 6 | (p[i] & 0x3f);
+		if (i <= n || c < min || c > 0x10ffff ||
+		    (c >= 0xd800 && c <= 0xdfff)) {
+			*p++ = '?';
+			continue;
+		}
+		p += n + 1;
+	}
+}
+
 /* Join the non empty, trimmed lines of s with newlines, in place. */
 static void
 tidy(char *s)
@@ -1241,16 +1288,14 @@ ocr(const uint8_t *img, int stride, const int box[4])
 
 	if (reap(pid, "tesseract") != 0)
 		text[0] = '\0';
+	utf8(text);
 	tidy(text);
 	debug("tesseract took %lld ms, %zu bytes of text", now() - start,
 	    strlen(text));
 	return text;
 }
 
-/*
- * notify-send bodies may contain markup, and notify-send turns backslash
- * sequences such as \n in them into what they stand for, escape both.
- */
+/* Notification bodies may contain markup, escape it. */
 static char *
 escape(const char *s)
 {
@@ -1259,8 +1304,7 @@ escape(const char *s)
 	size_t len = 1;
 
 	for (p = s; *p != '\0'; p++)
-		len += *p == '&' ? 5 : *p == '<' || *p == '>' ? 4 :
-		    *p == '\\' ? 2 : 1;
+		len += *p == '&' ? 5 : *p == '<' || *p == '>' ? 4 : 1;
 	if ((e = malloc(len)) == NULL)
 		fatal("malloc");
 	for (o = e, p = s; *p != '\0'; p++) {
@@ -1270,8 +1314,6 @@ escape(const char *s)
 			o = stpcpy(o, "&lt;");
 		else if (*p == '>')
 			o = stpcpy(o, "&gt;");
-		else if (*p == '\\')
-			o = stpcpy(o, "\\\\");
 		else
 			*o++ = *p;
 	}
@@ -1279,20 +1321,417 @@ escape(const char *s)
 	return e;
 }
 
-static void
-notify(char *summary, const char *body)
-{
-	char *argv[] = { "notify-send", "-a", "vmnotify", "--", NULL, NULL,
-	    NULL };
-	char *e;
+/*
+ * Desktop notifications, sent with the Notify method of the
+ * org.freedesktop.Notifications service on the D-Bus session bus. Only
+ * what that needs is spoken: EXTERNAL authentication over a unix socket,
+ * little endian method calls and finding the reply.
+ */
 
-	/* OCR text may start with a dash, end the options first */
+struct buf {
+	uint8_t	*p;
+	size_t	 len;
+	size_t	 size;
+};
+
+static void
+bput(struct buf *b, const void *p, size_t n)
+{
+	if (n == 0)
+		return;
+	if (b->size - b->len < n) {
+		b->size = (b->len + n) * 2;
+		if ((b->p = realloc(b->p, b->size)) == NULL)
+			fatal("realloc");
+	}
+	memcpy(b->p + b->len, p, n);
+	b->len += n;
+}
+
+/* Pad with zeros to a multiple of n bytes from the message start. */
+static void
+balign(struct buf *b, size_t n)
+{
+	static const uint8_t zero[8];
+
+	bput(b, zero, (n - b->len % n) % n);
+}
+
+static void
+bu32(struct buf *b, uint32_t v)
+{
+	uint8_t p[4];
+
+	p[0] = v & 0xff;
+	p[1] = (v >> 8) & 0xff;
+	p[2] = (v >> 16) & 0xff;
+	p[3] = v >> 24;
+	balign(b, 4);
+	bput(b, p, sizeof(p));
+}
+
+/* STRING and OBJECT_PATH */
+static void
+bstr(struct buf *b, const char *s)
+{
+	size_t n = strlen(s);
+
+	bu32(b, n);
+	bput(b, s, n + 1);
+}
+
+/* SIGNATURE, at most 255 bytes */
+static void
+bsig(struct buf *b, const char *s)
+{
+	uint8_t n = strlen(s);
+
+	bput(b, &n, 1);
+	bput(b, s, n + 1);
+}
+
+/* A header field: its code and a variant of type sig holding s. */
+static void
+bfield(struct buf *b, uint8_t code, const char *sig, const char *s)
+{
+	balign(b, 8);
+	bput(b, &code, 1);
+	bsig(b, sig);
+	if (*sig == 'g')
+		bsig(b, s);
+	else
+		bstr(b, s);
+}
+
+/* Build a method call with the given body, which may be NULL. */
+static void
+dbus_call(struct buf *m, uint32_t serial, const char *dest,
+    const char *path, const char *iface, const char *member,
+    const char *sig, const struct buf *body)
+{
+	static const uint8_t start[4] = { 'l', 1, 0, 1 };
+	size_t fields;
+
+	bput(m, start, sizeof(start));
+	bu32(m, body != NULL ? body->len : 0);
+	bu32(m, serial);
+	bu32(m, 0);
+	fields = m->len;
+	bfield(m, 1, "o", path);
+	bfield(m, 2, "s", iface);
+	bfield(m, 3, "s", member);
+	bfield(m, 6, "s", dest);
+	if (sig != NULL)
+		bfield(m, 8, "g", sig);
+	/* the length of the header fields, little endian at offset 12 */
+	m->p[12] = (m->len - fields) & 0xff;
+	m->p[13] = ((m->len - fields) >> 8) & 0xff;
+	m->p[14] = ((m->len - fields) >> 16) & 0xff;
+	m->p[15] = (m->len - fields) >> 24;
+	balign(m, 8);
+	if (body != NULL)
+		bput(m, body->p, body->len);
+}
+
+static uint32_t
+dget32(const uint8_t *p, int big)
+{
+	if (big)
+		return get32(p);
+	return (uint32_t)p[3] << 24 | (uint32_t)p[2] << 16 |
+	    (uint32_t)p[1] << 8 | p[0];
+}
+
+/* Connect to a unix socket, abstract names start with a NUL. */
+static int
+dbus_socket(const char *name, int abstract)
+{
+	struct sockaddr_un sun;
+	size_t len = strlen(name);
+	int fd;
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	if (len + abstract >= sizeof(sun.sun_path)) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
+	memcpy(sun.sun_path + abstract, name, len);
+	if ((fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) == -1)
+		return -1;
+	if (connect(fd, (struct sockaddr *)&sun,
+	    offsetof(struct sockaddr_un, sun_path) + abstract + len +
+	    !abstract) == -1) {
+		close(fd);
+		return -1;
+	}
+	return fd;
+}
+
+/* Undo the %XX escapes of an address value in place, -1 if invalid. */
+static int
+unescape(char *s)
+{
+	char *o = s, hex[3];
+
+	for (; *s != '\0'; s++) {
+		if (*s != '%') {
+			*o++ = *s;
+			continue;
+		}
+		if (!isxdigit((unsigned char)s[1]) ||
+		    !isxdigit((unsigned char)s[2]))
+			return -1;
+		hex[0] = s[1];
+		hex[1] = s[2];
+		hex[2] = '\0';
+		*o++ = strtol(hex, NULL, 16);
+		s += 2;
+	}
+	*o = '\0';
+	return 0;
+}
+
+/*
+ * Connect to the session bus: the first unix:path= or unix:abstract=
+ * address of DBUS_SESSION_BUS_ADDRESS that works, or else
+ * $XDG_RUNTIME_DIR/bus.
+ */
+static int
+dbus_connect(void)
+{
+	char path[PATH_MAX], *all, *next, *addr, *kv, *val;
+	const char *env, *dir;
+	int fd = -1, abstract;
+
+	if ((env = getenv("DBUS_SESSION_BUS_ADDRESS")) == NULL ||
+	    *env == '\0') {
+		if ((dir = getenv("XDG_RUNTIME_DIR")) == NULL ||
+		    *dir == '\0') {
+			log_warnx("no session bus, neither "
+			    "DBUS_SESSION_BUS_ADDRESS nor XDG_RUNTIME_DIR "
+			    "is set");
+			return -1;
+		}
+		if ((size_t)snprintf(path, sizeof(path), "%s/bus", dir) >=
+		    sizeof(path) || (fd = dbus_socket(path, 0)) == -1)
+			log_warn("session bus %s", path);
+		return fd;
+	}
+
+	if ((all = strdup(env)) == NULL)
+		fatal("strdup");
+	errno = EINVAL;
+	for (next = all; fd == -1 && (addr = strsep(&next, ";")) != NULL;) {
+		if (strncmp(addr, "unix:", 5) != 0)
+			continue;
+		addr += 5;
+		while (fd == -1 && (kv = strsep(&addr, ",")) != NULL) {
+			if ((val = strchr(kv, '=')) == NULL)
+				continue;
+			*val++ = '\0';
+			if (strcmp(kv, "path") == 0)
+				abstract = 0;
+			else if (strcmp(kv, "abstract") == 0)
+				abstract = 1;
+			else
+				continue;
+			if (unescape(val) == 0)
+				fd = dbus_socket(val, abstract);
+		}
+	}
+	free(all);
+	if (fd == -1)
+		log_warn("session bus %s", env);
+	return fd;
+}
+
+/*
+ * Read one message, return its type and put in reply the serial it
+ * answers, 0 if none, and in err the name and text of an error. Return
+ * -1 if it cannot be read.
+ */
+static int
+dbus_read(int fd, uint32_t *reply, char *err, size_t errlen)
+{
+	uint8_t h[16], *m;
+	uint32_t blen, flen, n, v;
+	size_t len, off, end, i;
+	int big, type, code, t, sig = 0;
+
+	*reply = 0;
+	if (readall(fd, h, sizeof(h)) == -1)
+		return -1;
+	if ((h[0] != 'l' && h[0] != 'B') || h[3] != 1) {
+		errno = EBADMSG;
+		return -1;
+	}
+	big = h[0] == 'B';
+	type = h[1];
+	blen = dget32(h + 4, big);
+	flen = dget32(h + 12, big);
+	if (blen > DBUSMAX || flen > DBUSMAX) {
+		errno = EMSGSIZE;
+		return -1;
+	}
+	end = sizeof(h) + flen;
+	len = ((end + 7) & ~(size_t)7) + blen;
+	if ((m = malloc(len)) == NULL)
+		fatal("malloc");
+	memcpy(m, h, sizeof(h));
+	if (readall(fd, m + sizeof(h), len - sizeof(h)) == -1) {
+		free(m);
+		return -1;
+	}
+
+	/* header fields: code, a one type signature, the value */
+	for (off = sizeof(h); off < end;) {
+		off = (off + 7) & ~(size_t)7;
+		if (off + 4 > end || m[off + 1] != 1 || m[off + 3] != '\0')
+			goto bad;
+		code = m[off];
+		t = m[off + 2];
+		off += 4;
+		if (t == 'u') {
+			off = (off + 3) & ~(size_t)3;
+			if (off + 4 > end)
+				goto bad;
+			v = dget32(m + off, big);
+			off += 4;
+			if (code == 5)
+				*reply = v;
+		} else if (t == 's' || t == 'o') {
+			off = (off + 3) & ~(size_t)3;
+			if (off + 4 > end)
+				goto bad;
+			n = dget32(m + off, big);
+			off += 4;
+			if (n >= end - off || m[off + n] != '\0')
+				goto bad;
+			if (code == 4)
+				snprintf(err, errlen, "%s", m + off);
+			off += n + 1;
+		} else if (t == 'g') {
+			if (off >= end || (size_t)m[off] + 2 > end - off)
+				goto bad;
+			if (code == 8 && m[off] > 0)
+				sig = m[off + 1];
+			off += m[off] + 2;
+		} else
+			goto bad;
+	}
+
+	/* an error body starts with a string telling what went wrong */
+	off = (end + 7) & ~(size_t)7;
+	if (type == 3 && sig == 's' && blen >= 4) {
+		n = dget32(m + off, big);
+		if (n < blen - 4 && m[off + 4 + n] == '\0')
+			snprintf(err + strlen(err), errlen - strlen(err),
+			    ": %s", m + off + 4);
+	}
+	for (i = 0; err[i] != '\0'; i++)
+		if (!isprint((unsigned char)err[i]))
+			err[i] = '?';
+	free(m);
+	return type;
+
+bad:
+	free(m);
+	errno = EBADMSG;
+	return -1;
+}
+
+/*
+ * Send a notification. A connection is made for each, they are rare.
+ * Failures are only logged, the notification is lost.
+ */
+static void
+notify(const char *summary, const char *body)
+{
+	struct buf args = { NULL, 0, 0 }, hello = { NULL, 0, 0 };
+	struct buf call = { NULL, 0, 0 };
+	struct timeval tv = { TIMEOUT, 0 };
+	char auth[64], line[256], err[256], *e;
+	size_t len = 0;
+	uint32_t reply;
+	int fd, i, n, type = -1;
+
+	debug("sending a notification, summary \"%s\"", summary);
+	if ((fd = dbus_connect()) == -1)
+		return;
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1 ||
+	    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == -1)
+		fatal("setsockopt");
+
+	/* a NUL byte, then AUTH EXTERNAL with the uid in hex digits */
+	n = snprintf(line, sizeof(line), "%u", (unsigned int)getuid());
+	auth[0] = '\0';
+	len = 1 + snprintf(auth + 1, sizeof(auth) - 1, "AUTH EXTERNAL ");
+	for (i = 0; i < n; i++)
+		len += snprintf(auth + len, sizeof(auth) - len, "%02x",
+		    (unsigned char)line[i]);
+	len += snprintf(auth + len, sizeof(auth) - len, "\r\n");
+	if (writeall(fd, auth, len) == -1)
+		goto fail;
+	for (len = 0; len < sizeof(line) - 1; len++) {
+		if (readall(fd, line + len, 1) == -1)
+			goto fail;
+		if (len > 0 && line[len - 1] == '\r' && line[len] == '\n')
+			break;
+	}
+	line[len] = '\0';
+	if (strncmp(line, "OK ", 3) != 0) {
+		log_warnx("session bus refused the authentication");
+		goto out;
+	}
+
 	e = escape(body);
-	argv[4] = summary;
-	argv[5] = e;
-	debug("running notify-send, summary \"%s\"", summary);
-	reap(spawn(argv, -1, -1), "notify-send");
+	bstr(&args, "vmnotify");
+	bu32(&args, 0);
+	bstr(&args, "");
+	bstr(&args, summary);
+	bstr(&args, e);
+	bu32(&args, 0);		/* no actions */
+	bu32(&args, 0);		/* no hints, padded for the dict entries */
+	balign(&args, 8);
+	bu32(&args, (uint32_t)-1);
 	free(e);
+	dbus_call(&hello, 1, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+	    "org.freedesktop.DBus", "Hello", NULL, NULL);
+	dbus_call(&call, 2, "org.freedesktop.Notifications",
+	    "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
+	    "Notify", "susssasa{sv}i", &args);
+	if (writeall(fd, "BEGIN\r\n", 7) == -1 ||
+	    writeall(fd, hello.p, hello.len) == -1 ||
+	    writeall(fd, call.p, call.len) == -1)
+		goto fail;
+
+	/* skip the answer to Hello and signals until Notify is answered */
+	err[0] = '\0';
+	for (i = 0; i < DBUSREPLIES; i++) {
+		if ((type = dbus_read(fd, &reply, err, sizeof(err))) == -1)
+			goto fail;
+		if (reply == 2 && (type == 2 || type == 3))
+			break;
+	}
+	if (i == DBUSREPLIES)
+		log_warnx("no answer to the notification");
+	else if (type == 3)
+		log_warnx("notification refused: %s", err);
+	else
+		debug("notification sent");
+	goto out;
+
+fail:
+	if (errno == 0)
+		log_warnx("session bus closed the connection");
+	else
+		log_warn("session bus");
+out:
+	free(args.p);
+	free(hello.p);
+	free(call.p);
+	close(fd);
 }
 
 /* Main loop */
