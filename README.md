@@ -190,6 +190,10 @@ remove it first:
 Regions are at most 4096 by 4096 pixels, and the guest screen at most
 8192 by 8192.
 
+With `-d`, ps(1) shows two processes: `vmnotify: monitor` followed by
+the server, which starts the watching one again after errors, and
+`vmnotify: watcher` followed by the machine name and the server.
+
 Only one vmnotify watches at a time, it holds a lock on
 `$XDG_RUNTIME_DIR/vmnotify.lock` (or `~/.vmnotify.lock`), which also
 contains its process ID. A screenshot with `-s` can always be taken.

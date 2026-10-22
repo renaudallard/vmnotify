@@ -151,6 +151,13 @@ Run in the background and log to
 Whenever watching stops on an error, for example because the virtual
 machine is powered off or the password is wrong, or cannot start because
 the process limit is reached, it starts again after 30 seconds.
+The process starting it again shows as
+.Dq vmnotify: monitor
+in
+.Xr ps 1 ,
+followed by the server, and the one watching as
+.Dq vmnotify: watcher ,
+followed by the machine name and the server.
 .It Fl h
 Show the version and a summary of the options and of
 .Pa ~/.vmnotifyrc ,

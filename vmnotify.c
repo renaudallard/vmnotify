@@ -134,6 +134,9 @@ static int debugging;
 static int logsyslog;
 /* the machine notifications come from: the VNC desktop name or server */
 static char machine[256];
+/* where the arguments and environment were, for the process title */
+static char *title;
+static size_t titlelen;
 /* what we are waiting for, for error messages */
 static const char *stage = "connecting";
 
@@ -2857,6 +2860,59 @@ readrc(char *rc[NKEYS])
 	fclose(fp);
 }
 
+/*
+ * Make room for a process title, which ps(1) shows, where the argument
+ * and environment strings are: copy them elsewhere and clear the place,
+ * which also takes VNC_PASSWORD out of what /proc/self/environ shows.
+ * Return the copy of argv.
+ */
+static char **
+inittitle(int argc, char *argv[])
+{
+	char **nargv, *end;
+	int i;
+
+	if (argc < 1)
+		return argv;
+	end = argv[0];
+	for (i = 0; i < argc; i++)
+		if (argv[i] == end)
+			end = argv[i] + strlen(argv[i]) + 1;
+	for (i = 0; environ[i] != NULL; i++)
+		if (environ[i] == end)
+			end = environ[i] + strlen(environ[i]) + 1;
+
+	if ((nargv = calloc(argc + 1, sizeof(*nargv))) == NULL)
+		fatal("calloc");
+	for (i = 0; i < argc; i++)
+		if ((nargv[i] = strdup(argv[i])) == NULL)
+			fatal("strdup");
+	for (i = 0; environ[i] != NULL; i++)
+		if ((environ[i] = strdup(environ[i])) == NULL)
+			fatal("strdup");
+
+	title = argv[0];
+	titlelen = end - argv[0];
+	explicit_bzero(title, titlelen);
+	snprintf(title, titlelen, "vmnotify");
+	return nargv;
+}
+
+static void __attribute__((__format__(__printf__, 1, 2)))
+setproctitle(const char *fmt, ...)
+{
+	va_list ap;
+	size_t n;
+
+	if (title == NULL)
+		return;
+	va_start(ap, fmt);
+	vsnprintf(title, titlelen, fmt, ap);
+	va_end(ap);
+	n = strlen(title);
+	memset(title + n, 0, titlelen - n);
+}
+
 /* Keep a second instance from watching too, hold the lock until exit. */
 static int
 lock(void)
@@ -2910,7 +2966,7 @@ onsignal(int sig)
  * for example at the process limit. Only children return.
  */
 static void
-supervise(void)
+supervise(const char *where)
 {
 	struct sigaction sa;
 	pid_t pid;
@@ -2942,6 +2998,7 @@ supervise(void)
 			signal(SIGTERM, SIG_DFL);
 			signal(SIGINT, SIG_DFL);
 			signal(SIGHUP, SIG_DFL);
+			setproctitle("vmnotify: watcher %s", where);
 			return;
 		}
 		debug("started watcher %ld", (long)pid);
@@ -3035,7 +3092,7 @@ main(int argc, char *argv[])
 	regex_t re;
 	const char *host, *shot = NULL;
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
-	char port[8], *p, *where;
+	char port[8], *p, *where, **args;
 	int ch, error, fd, k, dflag = 0, interval = 1, cooldown = 30;
 
 	/* make sure 0, 1 and 2 are open, children rely on them */
@@ -3046,6 +3103,8 @@ main(int argc, char *argv[])
 
 	/* waitpid needs SIGCHLD not to be ignored, it may be inherited */
 	signal(SIGCHLD, SIG_DFL);
+
+	argv = args = inittitle(argc, argv);
 
 	/* + makes glibc stop at the server like musl does */
 	while ((ch = getopt(argc, argv, "+b:c:dhi:m:s:t:Vv")) != -1) {
@@ -3095,14 +3154,18 @@ main(int argc, char *argv[])
 	debug("vmnotify %s", VERSION);
 
 	/* the environment wins over the file, empty means unset */
-	if ((p = getenv("VNC_PASSWORD")) != NULL && *p != '\0') {
-		if ((envpw = strdup(p)) == NULL)
-			fatal("strdup");
-		opt[K_PASSWORD] = envpw;
-		/* also wipe it from what /proc/self/environ shows */
-		explicit_bzero(p, strlen(p));
+	if ((p = getenv("VNC_PASSWORD")) != NULL) {
+		if (*p != '\0') {
+			if ((envpw = strdup(p)) == NULL)
+				fatal("strdup");
+			opt[K_PASSWORD] = envpw;
+			explicit_bzero(p, strlen(p));
+		}
+		unsetenv("VNC_PASSWORD");
+		/* the copy inittitle() made of the variable */
+		if (title != NULL)
+			free(p - strlen("VNC_PASSWORD="));
 	}
-	unsetenv("VNC_PASSWORD");
 
 	readrc(rc);
 	for (k = 0; k < NKEYS; k++)
@@ -3175,6 +3238,10 @@ main(int argc, char *argv[])
 		free(v.got);
 		free(where);
 		regfree(&re);
+		for (k = 0; title != NULL && args[k] != NULL; k++)
+			free(args[k]);
+		if (title != NULL)
+			free(args);
 		if (envpw != NULL) {
 			explicit_bzero(envpw, strlen(envpw));
 			free(envpw);
@@ -3195,9 +3262,12 @@ main(int argc, char *argv[])
 		openlog("vmnotify", LOG_PID, LOG_USER);
 		logsyslog = 1;
 		writepid(fd);
-		supervise();
-	} else
+		setproctitle("vmnotify: monitor %s", where);
+		supervise(where);
+	} else {
 		writepid(fd);
+		setproctitle("vmnotify: watcher %s", where);
+	}
 
 	vnc_connect(&v, host, port);
 	vnc_handshake(&v, opt[K_PASSWORD]);
@@ -3205,5 +3275,7 @@ main(int argc, char *argv[])
 		explicit_bzero(opt[K_PASSWORD], strlen(opt[K_PASSWORD]));
 	if (machine[0] == '\0')
 		snprintf(machine, sizeof(machine), "%s", where);
+	else
+		setproctitle("vmnotify: watcher %s %s", machine, where);
 	watch(&v, &toast, bp, &re, interval, cooldown);
 }
