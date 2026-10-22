@@ -197,7 +197,7 @@ Regions are at most 4096 by 4096 pixels, and the guest screen at most
 With `-d`, ps(1) shows three processes: `vmnotify: monitor` followed by
 the server, which starts the watching one again after errors,
 `vmnotify: watcher` followed by the machine name and the server, and
-`vmnotify: helper`.
+`vmnotify: helper` followed by the server.
 
 ## Security
 
