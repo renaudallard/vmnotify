@@ -62,7 +62,9 @@ Only the changed part is read: the solid rectangle a toast paints when
 its background differs from what is underneath, or else all changed
 pixels.
 For a solid rectangle, changes more than 24 blank rows away from it,
-such as a line changing higher up in a window underneath, are left out.
+such as a line changing higher up in a window underneath, are left out,
+unless nothing to forward is read in it: it may be a window opening at
+the same time as a toast.
 It is converted to grey, light text on a dark background is turned dark
 on light, it is scaled up twice and passed to
 .Xr tesseract 1 .

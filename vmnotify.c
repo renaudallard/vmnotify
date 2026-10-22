@@ -1952,7 +1952,8 @@ toast_seen(char *text, const regex_t *re, char **last)
 /*
  * Compare two w by h images of the toast area. Return the percentage of
  * pixels differing by more than NOISE, and in span the height of the
- * box around them. Put in box the part to read.
+ * box around them. Put in box the part to read, and in all the box
+ * around all changes when some are not in box, else box.
  *
  * Changed rows with at most GAP blank rows between them form bands, a
  * toast or a stack of them is one. A toast whose background differs
@@ -1965,7 +1966,8 @@ toast_seen(char *text, const regex_t *re, char **last)
  * A toast on a window of the same colour only changes its text, it may
  * have fewer changes than a window scrolling above it. The box is then
  * around all changes. Growing it would take in the cut off bottom of
- * text above the toast. It is the whole area when nothing changed.
+ * text above the toast. Both boxes are the whole area when nothing
+ * changed.
  */
 
 /* Return 1 if a pixel changed by more than NOISE. */
@@ -1977,7 +1979,7 @@ differ(uint8_t a, uint8_t b)
 
 static int
 compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
-    int *solid, int *span)
+    int all[4], int *solid, int *span)
 {
 	size_t i, n = 0, nb, *rows, sum = 0, best = 0;
 	int *cnt, x, y, bw = w / BLOCK, bh = h / BLOCK;
@@ -2051,6 +2053,16 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 	free(cnt);
 
 	*span = n > 0 ? sy1 - sy0 : 0;
+	if (n > 0) {
+		all[0] = sx0;
+		all[1] = sy0;
+		all[2] = sx1 - sx0;
+		all[3] = sy1 - sy0;
+	} else {
+		all[0] = all[1] = 0;
+		all[2] = w;
+		all[3] = h;
+	}
 	*solid = dx0 < dx1 && 4 * (size_t)(dx1 - dx0) * (dy1 - dy0) >=
 	    3 * (size_t)(x1 - x0) * (y1 - y0);
 	if (*solid) {
@@ -2058,16 +2070,11 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 		box[1] = dy0;
 		box[2] = dx1 - dx0;
 		box[3] = dy1 - dy0;
-	} else if (n > 0) {
-		box[0] = sx0;
-		box[1] = sy0;
-		box[2] = sx1 - sx0;
-		box[3] = sy1 - sy0;
-	} else {
-		box[0] = box[1] = 0;
-		box[2] = w;
-		box[3] = h;
-	}
+	} else
+		memcpy(box, all, 4 * sizeof(*box));
+	/* the band holds all changes, nothing was left out */
+	if (best == n)
+		memcpy(all, box, 4 * sizeof(*all));
 	return (int)(n * 100 / ((size_t)w * h));
 }
 
@@ -2108,8 +2115,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
-	int span = 0;
-	int part[4], last[4];
+	int span = 0, wider = 0;
+	int part[4], all[4], last[4];
 
 	len = (size_t)toast->w * toast->h;
 	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
@@ -2231,11 +2238,15 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		 *   before so that a replacement keeps the unchanged header,
 		 *   unless no pixel changed by more than NOISE.
 		 *
-		 * When no toast to forward was read, the area becomes base.
+		 * A new solid rectangle read alone may be something else, such
+		 * as a window opening, with the toast left out. When nothing
+		 * to forward was read in it, all changes are read. When still
+		 * nothing was, the area becomes base.
 		 */
 		if (unread && t - changed >= interval * 1000LL) {
 			unread = 0;
 			doread = 0;
+			wider = 0;
 			if (!read) {
 				part[0] = part[1] = 0;
 				part[2] = toast->w;
@@ -2244,7 +2255,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				memcpy(base, prev, len);
 				doread = 1;
 			} else if (showing && compare(prev, base, toast->w,
-			    toast->h, part, &solid, &span) < MINCHANGE &&
+			    toast->h, part, all, &solid, &span) < MINCHANGE &&
 			    span < MINHEIGHT) {
 				debug("toast gone");
 				showing = 0;
@@ -2253,14 +2264,17 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				lasttext = NULL;
 			} else {
 				pct = compare(prev, showing ? seen : base,
-				    toast->w, toast->h, part, &solid, &span);
+				    toast->w, toast->h, part, all, &solid,
+				    &span);
 				if (showing && span > 0) {
 					unite(part, last);
 					doread = 1;
 				} else if (!showing && (pct >= MINCHANGE ||
-				    span >= MINHEIGHT))
+				    span >= MINHEIGHT)) {
 					doread = 1;
-				else
+					wider = memcmp(part, all,
+					    sizeof(part)) != 0;
+				} else
 					debug("toast area %d%% different over "
 					    "%d rows, not read", pct, span);
 			}
@@ -2271,6 +2285,14 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				read = 1;
 				showing = toast_seen(ocr(prev, toast->w, part),
 				    re, &lasttext);
+				if (!showing && wider) {
+					memcpy(part, all, sizeof(part));
+					debug("nothing to forward, reading all "
+					    "changes, %dx%d at %d,%d", part[2],
+					    part[3], part[0], part[1]);
+					showing = toast_seen(ocr(prev, toast->w,
+					    part), re, &lasttext);
+				}
 				if (showing)
 					memcpy(last, part, sizeof(last));
 				else

@@ -23,13 +23,14 @@ Two things are watched:
   lines of the new one are sent, if they match the regex.
 
   To save work, a change is only read when it covers at least 15% of the
-  area or two lines of text, so a line changing in a window underneath
-  is ignored, and a toast going away is noticed by the area looking like
-  it did before. When the toast paints its own background, changes away
-  from it, such as a line changing higher up in a window underneath, are
-  not read with it. Only colour differences count, never particular
-  colours, so light and dark themes work alike, and light text on a dark
-  toast is turned dark on light for tesseract.
+  area or two lines of text, so a line changing in a window underneath is
+  ignored, and a toast going away is noticed by the area looking like it
+  did before. When the toast paints its own background, changes away from
+  it, such as a line changing higher up in a window underneath, are not
+  read with it, unless nothing to forward was read in it. Only colour
+  differences count, never particular colours, so light and dark themes
+  work alike, and light text on a dark toast is turned dark on light for
+  tesseract.
 - optionally, a taskbar icon (for example Teams). When its pixels change,
   e.g. a badge appears or the icon flashes, a "Taskbar icon changed"
   notification is sent. Further changes are ignored for 30 seconds.
