@@ -2023,6 +2023,7 @@ helper_start(int vncfd, const char *where)
 #define SC_NR		0	/* offsetof(struct seccomp_data, nr) */
 #define SC_ARCH		4	/* offsetof(struct seccomp_data, arch) */
 #define SC_ARG2		32	/* low half of args[2] */
+#define SC_ARG5		56	/* low half of args[5] */
 #define SC_X32		0x40000000U
 #if defined(__x86_64__)
 #define SC_AUDIT_ARCH	0xc000003eU
@@ -2044,6 +2045,11 @@ struct bpfprog {
 
 #define SC(nr, action) \
 	{ BPF_JEQ_K, 0, 1, (nr) }, { BPF_RET_K, 0, 0, (action) }
+/* sending only where the socket is connected, as send(2) does */
+#define SC_NOADDR(nr) \
+	{ BPF_JEQ_K, 0, 4, (nr) }, { BPF_LD_W_ABS, 0, 0, SC_ARG5 }, \
+	{ BPF_JEQ_K, 0, 1, 0 }, { BPF_RET_K, 0, 0, SC_ALLOW }, \
+	{ BPF_RET_K, 0, 0, SC_KILL }
 /* memory is never made executable */
 #define SC_NOEXEC(nr) \
 	{ BPF_JEQ_K, 0, 4, (nr) }, { BPF_LD_W_ABS, 0, 0, SC_ARG2 }, \
@@ -2081,7 +2087,7 @@ static const struct bpf filter[] = {
 	SC(SYS_newfstatat, SC_ALLOW),
 	SC(SYS_lseek, SC_ALLOW),
 	SC(SYS_getpid, SC_ALLOW),
-	SC(SYS_sendto, SC_ALLOW),
+	SC_NOADDR(SYS_sendto),
 	SC(SYS_futex, SC_ALLOW),
 	SC(SYS_getrandom, SC_ALLOW),
 	SC(SYS_rt_sigprocmask, SC_ALLOW),
