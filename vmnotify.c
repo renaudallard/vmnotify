@@ -1243,7 +1243,10 @@ ocr(const uint8_t *img, int stride, const int box[4])
 	return text;
 }
 
-/* notify-send bodies may contain markup, escape it. */
+/*
+ * notify-send bodies may contain markup, and notify-send turns backslash
+ * sequences such as \n in them into what they stand for, escape both.
+ */
 static char *
 escape(const char *s)
 {
@@ -1252,7 +1255,8 @@ escape(const char *s)
 	size_t len = 1;
 
 	for (p = s; *p != '\0'; p++)
-		len += *p == '&' ? 5 : *p == '<' || *p == '>' ? 4 : 1;
+		len += *p == '&' ? 5 : *p == '<' || *p == '>' ? 4 :
+		    *p == '\\' ? 2 : 1;
 	if ((e = malloc(len)) == NULL)
 		fatal("malloc");
 	for (o = e, p = s; *p != '\0'; p++) {
@@ -1262,6 +1266,8 @@ escape(const char *s)
 			o = stpcpy(o, "&lt;");
 		else if (*p == '>')
 			o = stpcpy(o, "&gt;");
+		else if (*p == '\\')
+			o = stpcpy(o, "\\\\");
 		else
 			*o++ = *p;
 	}
