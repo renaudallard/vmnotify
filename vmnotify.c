@@ -1410,6 +1410,21 @@ prefix(char *a, char *b, char **end)
 	return 1;
 }
 
+/*
+ * Find the lines of b as a run of lines of a, see prefix(). Return where
+ * it starts and put in end where the rest of a starts.
+ */
+static char *
+find(char *a, char *b, char **end)
+{
+	char *s;
+
+	for (s = keyed(a); s != NULL; s = keyed(after(s)))
+		if (prefix(s, b, end))
+			return s;
+	return NULL;
+}
+
 /* Send text, the first line as summary and the rest as body. */
 static void
 forward(char *text)
@@ -1429,7 +1444,8 @@ forward(char *text)
 static int
 toast_seen(char *text, const regex_t *re, char **last)
 {
-	char *end;
+	char *old, *start, *end, *rest;
+	size_t len;
 
 	show("toast area", text);
 	if (*text == '\0' || regexec(re, text, 0, NULL, 0) != 0) {
@@ -1438,14 +1454,29 @@ toast_seen(char *text, const regex_t *re, char **last)
 		free(text);
 		return 0;
 	}
-	if (*last != NULL && prefix(*last, text, &end) &&
-	    keyed(end) == NULL) {
-		free(text);
+	old = *last;
+	*last = text;
+
+	/* the same toast, or what is left of a stack of them */
+	if (old != NULL && find(old, text, &end) != NULL) {
+		free(old);
 		return 1;
 	}
-	free(*last);
-	*last = text;
-	forward(text);
+
+	/* a toast stacked with the one sent before, only send the new one */
+	if (old != NULL && (start = find(text, old, &end)) != NULL) {
+		len = start - text;
+		if ((rest = malloc(strlen(text) + 1)) == NULL)
+			fatal("malloc");
+		memcpy(rest, text, len);
+		strcpy(rest + len, end != NULL ? end : "");
+		tidy(rest);
+		if (regexec(re, rest, 0, NULL, 0) == 0)
+			forward(rest);
+		free(rest);
+	} else
+		forward(text);
+	free(old);
 	return 1;
 }
 

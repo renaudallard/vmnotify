@@ -77,6 +77,10 @@ Lines are compared by their ASCII letters and digits, ignoring case,
 and count as the same when at most a quarter of them differs, so that
 stray characters read from an icon, or from a button appearing when the
 mouse is over the toast, do not make it new.
+When a new toast stacks with one already sent, both are read and only
+the lines of the new one are sent, if they match
+.Ar regex .
+When one of a stack goes away, nothing is sent.
 .Pp
 With
 .Fl b ,

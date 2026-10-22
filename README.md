@@ -18,7 +18,8 @@ Two things are watched:
   A toast is sent once while it stays on screen. Lines are compared by
   their letters and digits and count as the same when at most a quarter
   of them differs, so stray characters read from an icon or a button
-  showing under the mouse do not make it new.
+  showing under the mouse do not make it new. When a new toast stacks
+  with one already sent, only the lines of the new one are sent.
 
   To save work, a change is only read when it covers at least 15% of the
   area or two lines of text, so a line changing in a window underneath
