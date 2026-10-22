@@ -121,6 +121,18 @@ The badge going away, presence changes, the mouse over an icon and
 icons moving along the taskbar send nothing, and neither does a badge
 already red at start.
 .Pp
+With
+.Cm checkupdates yes
+in
+.Pa ~/.vmnotifyrc ,
+.Nm
+asks GitHub at start with
+.Xr curl 1
+which release is the latest and says so when it is newer.
+Nothing is said when curl is missing or GitHub out of reach, which it is
+given 5 seconds for.
+Nothing is asked by default.
+.Pp
 Only one
 .Nm
 watches at a time, a second one exits with an error.
@@ -297,6 +309,10 @@ Like
 .It Cm cooldown Ar sec
 Like
 .Fl c .
+.It Cm checkupdates Cm yes | Cm no
+Whether to say at start when a newer release is out, asking GitHub.
+The default is
+.Cm no .
 .El
 .It Pa $XDG_RUNTIME_DIR/vmnotify.lock
 Locked while
@@ -342,6 +358,7 @@ $ vmnotify -v
 $ vmnotify -d
 .Ed
 .Sh SEE ALSO
+.Xr curl 1 ,
 .Xr tesseract 1
 .Sh AUTHORS
 .An Renaud Allard Aq Mt renaud@allard.it

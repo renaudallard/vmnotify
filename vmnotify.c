@@ -67,6 +67,7 @@
 #include <unistd.h>
 
 #define VERSION		"0.4.0"
+#define RELEASES	"https://github.com/renaudallard/vmnotify/releases"
 
 #define MAXDIM		8192	/* largest framebuffer side accepted */
 #define MAXREGION	4096	/* largest region side accepted */
@@ -116,6 +117,7 @@ struct vnc {
 /* Settings from the command line or ~/.vmnotifyrc, kept as strings. */
 enum {
 	K_BADGE,
+	K_CHECKUPDATES,
 	K_COOLDOWN,
 	K_INTERVAL,
 	K_MATCH,
@@ -126,7 +128,8 @@ enum {
 };
 
 static const char *keywords[NKEYS] = {
-	"badge", "cooldown", "interval", "match", "password", "server", "toast"
+	"badge", "checkupdates", "cooldown", "interval", "match", "password",
+	"server", "toast"
 };
 
 static int verbose;
@@ -302,7 +305,9 @@ help(void)
 	    "  toast x,y,w,h        like -t\n"
 	    "  badge x,y,w,h|none   like -b\n"
 	    "  interval sec         like -i\n"
-	    "  cooldown sec         like -c\n", VERSION);
+	    "  cooldown sec         like -c\n"
+	    "  checkupdates yes|no  say at start when a newer release is "
+	    "out (no)\n", VERSION);
 	exit(0);
 }
 
@@ -1067,41 +1072,116 @@ screenshot(const struct vnc *v, const char *path)
 
 /* External commands */
 
+/*
+ * Run argv with in and out as its standard input and output, its errors
+ * thrown away. Return its pid, -1 with errno set when it cannot start.
+ */
 static pid_t
 spawn(char *const argv[], int in, int out)
 {
 	posix_spawn_file_actions_t fa;
 	posix_spawnattr_t attr;
 	sigset_t sigs;
-	pid_t pid;
+	pid_t pid = -1;
 	int error;
 
 	/* SIGPIPE is ignored here, give the children the default back */
 	sigemptyset(&sigs);
 	sigaddset(&sigs, SIGPIPE);
-	if ((error = posix_spawnattr_init(&attr)) != 0 ||
-	    (error = posix_spawnattr_setsigdefault(&attr, &sigs)) != 0 ||
+	if ((error = posix_spawnattr_init(&attr)) != 0)
+		goto out;
+	if ((error = posix_spawn_file_actions_init(&fa)) != 0) {
+		posix_spawnattr_destroy(&attr);
+		goto out;
+	}
+	if ((error = posix_spawnattr_setsigdefault(&attr, &sigs)) == 0 &&
 	    (error = posix_spawnattr_setflags(&attr,
-	    POSIX_SPAWN_SETSIGDEF)) != 0 ||
-	    (error = posix_spawn_file_actions_init(&fa)) != 0)
-		goto fail;
-	if ((error = posix_spawn_file_actions_adddup2(&fa, in,
-	    STDIN_FILENO)) != 0 ||
+	    POSIX_SPAWN_SETSIGDEF)) == 0 &&
+	    (error = posix_spawn_file_actions_adddup2(&fa, in,
+	    STDIN_FILENO)) == 0 &&
 	    (error = posix_spawn_file_actions_adddup2(&fa, out,
-	    STDOUT_FILENO)) != 0 ||
+	    STDOUT_FILENO)) == 0 &&
 	    (error = posix_spawn_file_actions_addopen(&fa, STDERR_FILENO,
-	    "/dev/null", O_WRONLY, 0)) != 0)
-		goto fail;
-	if ((error = posix_spawnp(&pid, argv[0], &fa, &attr, argv,
-	    environ)) != 0)
-		goto fail;
+	    "/dev/null", O_WRONLY, 0)) == 0)
+		error = posix_spawnp(&pid, argv[0], &fa, &attr, argv, environ);
 	posix_spawn_file_actions_destroy(&fa);
 	posix_spawnattr_destroy(&attr);
+out:
+	if (error != 0) {
+		errno = error;
+		return -1;
+	}
 	return pid;
+}
 
-fail:
-	errno = error;
-	fatal("%s", argv[0]);
+/* Return 1 if version a, as 1.2.3, is above version b. */
+static int
+newer(const char *a, const char *b)
+{
+	char *ea, *eb;
+	long x, y;
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		x = strtol(a, &ea, 10);
+		y = strtol(b, &eb, 10);
+		if (x != y)
+			return x > y;
+		a = *ea == '.' ? ea + 1 : ea;
+		b = *eb == '.' ? eb + 1 : eb;
+	}
+	return 0;
+}
+
+/*
+ * Say when a newer release is out. The latest release page redirects to
+ * its tag, curl(1) tells where without following. Nothing is said when
+ * curl is missing or GitHub out of reach.
+ */
+static void
+checkversion(void)
+{
+	char *argv[] = { "curl", "-s", "-o", "/dev/null", "--max-time", "5",
+	    "-w", "%{redirect_url}", RELEASES "/latest", NULL };
+	char buf[512], *tag;
+	size_t len = 0;
+	ssize_t n;
+	pid_t pid;
+	int in, out[2], status;
+
+	if ((in = open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
+		return;
+	if (pipe2(out, O_CLOEXEC) == -1)
+		fatal("pipe");
+	pid = spawn(argv, in, out[1]);
+	close(in);
+	close(out[1]);
+	while (pid != -1 && len < sizeof(buf) - 1) {
+		n = read(out[0], buf + len, sizeof(buf) - 1 - len);
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+		if (n == 0)
+			break;
+		len += n;
+	}
+	buf[len] = '\0';
+	close(out[0]);
+	while (pid != -1 && waitpid(pid, &status, 0) == -1 && errno == EINTR)
+		;
+
+	/* what comes from the network is only a version: digits and dots */
+	if ((tag = strstr(buf, "/tag/v")) == NULL)
+		return;
+	tag += strlen("/tag/v");
+	if (*tag == '\0' || strlen(tag) > 16 ||
+	    strspn(tag, "0123456789.") != strlen(tag))
+		return;
+	if (newer(tag, VERSION))
+		log_warnx("version %s is out, this is %s, see %s", tag,
+		    VERSION, RELEASES);
 }
 
 /* Wait for a command, return 0 if it succeeded. */
@@ -1283,7 +1363,8 @@ ocr(const uint8_t *img, int stride, const int box[4])
 		fatal("pipe");
 	debug("running tesseract on %dx%d", w * 2, h * 2);
 	start = now();
-	pid = spawn(argv, in[0], out[1]);
+	if ((pid = spawn(argv, in[0], out[1])) == -1)
+		fatal("tesseract");
 	close(in[0]);
 	close(out[1]);
 
@@ -3185,6 +3266,13 @@ main(int argc, char *argv[])
 		parse_region(opt[K_BADGE], &badge);
 	if (opt[K_COOLDOWN] != NULL)
 		cooldown = number(opt[K_COOLDOWN], 0, 86400, "cooldown");
+	/* asking GitHub is only done when asked for */
+	if (opt[K_CHECKUPDATES] != NULL &&
+	    strcmp(opt[K_CHECKUPDATES], "yes") == 0)
+		checkversion();
+	else if (opt[K_CHECKUPDATES] != NULL &&
+	    strcmp(opt[K_CHECKUPDATES], "no") != 0)
+		fatalx("invalid checkupdates: %s", opt[K_CHECKUPDATES]);
 	if (opt[K_INTERVAL] != NULL)
 		interval = number(opt[K_INTERVAL], 1, 3600, "interval");
 	if (opt[K_TOAST] != NULL)

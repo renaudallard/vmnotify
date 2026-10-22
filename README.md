@@ -70,6 +70,10 @@ Notifications are sent over D-Bus to the notification service of the
 desktop, which every desktop environment has; notify-send is not
 needed.
 
+With `checkupdates yes` in `~/.vmnotifyrc` and curl installed, vmnotify
+asks GitHub at start which release is the latest and says so when it is
+newer than itself. It asks nothing by default.
+
 ## Installing
 
 Static Linux amd64 binaries are attached to the
@@ -225,6 +229,8 @@ by anyone else.
     badge 0,-48,1920,48
     interval 1
     cooldown 30
+    # say at start when a newer release is out, asking GitHub
+    checkupdates no
 
 The password is removed from the environment of tesseract.
 
