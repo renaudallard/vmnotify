@@ -1969,7 +1969,8 @@ onsignal(int sig)
 
 /*
  * With -d, the first process stays as supervisor and runs the watcher in
- * a child, restarted RETRY seconds after it died. Only children return.
+ * a child, restarted RETRY seconds after it died or could not be started,
+ * for example at the process limit. Only children return.
  */
 static void
 supervise(void)
@@ -1994,8 +1995,12 @@ supervise(void)
 		fatal("sigaction");
 
 	for (;;) {
-		if ((pid = fork()) == -1)
-			fatal("fork");
+		if ((pid = fork()) == -1) {
+			log_warn("cannot start the watcher, retrying in %d "
+			    "seconds", RETRY);
+			sleep(RETRY);
+			continue;
+		}
 		if (pid == 0) {
 			signal(SIGTERM, SIG_DFL);
 			signal(SIGINT, SIG_DFL);

@@ -120,8 +120,8 @@ The default is 30, the maximum 86400.
 Run in the background and log to
 .Xr syslog 3 .
 Whenever watching stops on an error, for example because the virtual
-machine is powered off or the password is wrong, it starts again after
-30 seconds.
+machine is powered off or the password is wrong, or cannot start because
+the process limit is reached, it starts again after 30 seconds.
 .It Fl h
 Show the version and a summary of the options and of
 .Pa ~/.vmnotifyrc ,
