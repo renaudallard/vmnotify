@@ -71,6 +71,20 @@ A static binary can be built with musl:
 
     make CC=musl-gcc LDFLAGS=-static
 
+To upgrade, stop a running vmnotify, install the new one the same way
+and start it again:
+
+    kill $(cat $XDG_RUNTIME_DIR/vmnotify.lock)    # or ~/.vmnotify.lock
+    sudo ./install.sh
+    vmnotify -d
+
+Installing by hand as the README of 0.3.0 and earlier said may have
+left the manual page in a file named `/usr/local/share/man/man1`
+instead of a directory. Installing then fails with "Not a directory" or
+"File exists"; remove that file first:
+
+    sudo rm /usr/local/share/man/man1
+
 ## Setup
 
 1. In VMware Workstation, open VM > Settings > Options > VNC Connections,
@@ -93,7 +107,9 @@ A static binary can be built with musl:
 4. In Windows, make sure notifications are actually shown: Do not disturb
    off, Teams notifications on, and for Outlook on the web allow
    notifications for the site in Firefox and turn on desktop notifications
-   in the Outlook settings.
+   in the Outlook settings. Firefox shows them as Windows toasts, with
+   "Firefox" at the top and "via" the site at the bottom, which the
+   default regex matches.
 
 5. Take a screenshot to check the regions:
 
@@ -180,7 +196,8 @@ notify-send.
 ## Running under systemd
 
 Instead of `-d`, vmnotify can run as a systemd user service, which
-restarts it when it exits:
+restarts it when it exits. Unlike `-d`, which restarts the watching
+process but not itself, this also covers vmnotify being killed:
 
     mkdir -p ~/.config/systemd/user
     cp vmnotify.service ~/.config/systemd/user/
