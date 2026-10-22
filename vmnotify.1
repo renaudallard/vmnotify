@@ -113,7 +113,7 @@ for changes.
 Ignore changes of the taskbar icon for
 .Ar sec
 seconds after a taskbar icon notification.
-The default is 30.
+The default is 30, the maximum 86400.
 .It Fl d
 Run in the background and log to
 .Xr syslog 3 .
@@ -128,7 +128,7 @@ then exit.
 Read the toast area once it did not change for
 .Ar sec
 seconds.
-The default is 1.
+The default is 1, the maximum 3600.
 .It Fl m Ar regex
 Only forward toasts whose text matches the case insensitive extended
 regular expression
@@ -177,6 +177,9 @@ In regions, a negative
 or
 .Ar y
 counts from the right or bottom edge of the screen.
+Regions are at most 4096 by 4096 pixels.
+.Pp
+Guest screens larger than 8192 pixels on either side are not supported.
 .Pp
 .Ar server
 is

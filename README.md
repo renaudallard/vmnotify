@@ -117,13 +117,13 @@ A static binary can be built with musl:
 
     -b x,y,w,h  watch this taskbar icon for badge changes
     -c sec      ignore taskbar icon changes for sec after a taskbar icon
-                notification (default: 30)
+                notification (default: 30, at most 86400)
     -d          run in the background, log to syslog and start again 30
                 seconds after any error, such as the VM being powered off
     -h          show the version and a summary of the options and of
                 ~/.vmnotifyrc
     -i sec      read the toast area once it did not change for sec
-                seconds (default: 1)
+                seconds (default: 1, at most 3600)
     -m regex    only forward toasts whose text matches the case insensitive
                 extended regex (default: teams|outlook|firefox)
     -s file     save a screenshot of the VM to file as PPM and exit
@@ -133,6 +133,9 @@ A static binary can be built with musl:
     -v          print what is read, to syslog with -d
     server      host, host:display or host::port, IPv6 addresses in
                 brackets (default: 127.0.0.1::5900)
+
+Regions are at most 4096 by 4096 pixels, and the guest screen at most
+8192 by 8192.
 
 Only one vmnotify watches at a time, it holds a lock on
 `$XDG_RUNTIME_DIR/vmnotify.lock` (or `~/.vmnotify.lock`), which also
