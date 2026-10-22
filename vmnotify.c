@@ -1789,7 +1789,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		 *   a window underneath, is not read; such changes add up
 		 *   against base until they are.
 		 * - Otherwise read the part that changed, with the toast read
-		 *   before so that a replacement keeps the unchanged header.
+		 *   before so that a replacement keeps the unchanged header,
+		 *   unless no pixel changed by more than NOISE.
 		 *
 		 * When no toast to forward was read, the area becomes base.
 		 */
@@ -1814,11 +1815,11 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			} else {
 				pct = compare(prev, showing ? seen : base,
 				    toast->w, toast->h, part, &solid, &span);
-				if (showing) {
+				if (showing && span > 0) {
 					unite(part, last);
 					doread = 1;
-				} else if (pct >= MINCHANGE ||
-				    span >= MINHEIGHT)
+				} else if (!showing && (pct >= MINCHANGE ||
+				    span >= MINHEIGHT))
 					doread = 1;
 				else
 					debug("toast area %d%% different over "
