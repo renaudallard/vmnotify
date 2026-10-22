@@ -63,7 +63,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define VERSION		"0.3.2"
+#define VERSION		"0.3.3"
 
 #define MAXDIM		8192	/* largest framebuffer side accepted */
 #define MAXREGION	4096	/* largest region side accepted */
