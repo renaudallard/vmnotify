@@ -326,6 +326,8 @@ it is not read.
 .Pp
 A toast that is not forwarded and then replaced by one that is, with
 only its first line differing, is not read.
+When a toast below others is dismissed while a queued one appears, the
+toasts still on screen are sent again with the new one.
 App icons and close buttons may add a few stray characters to the text.
 .Pp
 A window underneath whose content moves right next to the toast as it
