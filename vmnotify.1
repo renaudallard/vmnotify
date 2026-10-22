@@ -193,6 +193,9 @@ Save the guest screen to
 .Ar file
 as a binary PPM image and exit.
 A new file is only readable by the user.
+It is made before connecting, see
+.Sx SECURITY CONSIDERATIONS ,
+and left empty when the screenshot cannot be taken.
 This helps to find the coordinates for
 .Fl b
 and
@@ -399,7 +402,9 @@ start: a taskbar on another edge, hidden at start, or a display scaling
 changed later needs the regions set.
 .Sh SECURITY CONSIDERATIONS
 Everything the VNC server sends, the guest screen included, is read by
-the watching process under a seccomp filter, set right after connecting.
+the watching process, or with
+.Fl s ,
+under a seccomp filter, set right after connecting.
 It may only read and write what it has open, wait for it, handle its
 memory, never made executable, and tell the time.
 Opening files, creating sockets and
