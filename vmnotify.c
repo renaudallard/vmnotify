@@ -717,6 +717,12 @@ vnc_name(struct vnc *v, uint32_t len)
 			machine[i] = '?';
 	machine[n] = '\0';
 	utf8(machine);
+	/* nor UTF-8 C1 controls, U+0080 to U+009F, as U+009B starts CSI */
+	for (i = 0; machine[i] != '\0'; i++)
+		if ((unsigned char)machine[i] == 0xc2 &&
+		    (unsigned char)machine[i + 1] >= 0x80 &&
+		    (unsigned char)machine[i + 1] <= 0x9f)
+			machine[i] = machine[i + 1] = '?';
 	debug("server name \"%s\"%s", machine, n < len ? ", truncated" : "");
 }
 
