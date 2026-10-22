@@ -66,7 +66,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define VERSION		"0.4.0"
+#define VERSION		"0.5.0"
 #define RELEASES	"https://github.com/renaudallard/vmnotify/releases"
 
 #define MAXDIM		8192	/* largest framebuffer side accepted */
