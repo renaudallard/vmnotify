@@ -1736,15 +1736,16 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			}
 			if (badge != NULL) {
 				crop(v, badge, bcur);
-				if (!fresh && memcmp(bcur, bprev, blen) != 0 &&
-				    t < quiet)
-					debug("taskbar icon changed during the "
-					    "cooldown");
-				if (!fresh && memcmp(bcur, bprev, blen) != 0 &&
-				    t >= quiet) {
-					show("taskbar icon", "changed");
-					notify("VM", "Taskbar icon changed");
-					quiet = t + cooldown * 1000LL;
+				if (!fresh && memcmp(bcur, bprev, blen) != 0) {
+					if (t < quiet)
+						debug("taskbar icon changed "
+						    "during the cooldown");
+					else {
+						show("taskbar icon", "changed");
+						notify("VM",
+						    "Taskbar icon changed");
+						quiet = t + cooldown * 1000LL;
+					}
 				}
 				tmp = bprev;
 				bprev = bcur;
