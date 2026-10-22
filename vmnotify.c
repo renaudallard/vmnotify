@@ -86,7 +86,7 @@
 #define REDMIN		140	/* a red badge pixel: red at least this, */
 #define REDOVERG	110	/* this much more red than green, */
 #define REDOVERB	40	/* this much more red than blue */
-#define REDBADGE	40	/* red pixels of a red badge, about 100 */
+#define REDBADGE	40	/* red pixels a red badge adds, about 100 */
 #define DBUSMAX		65536	/* largest D-Bus message part accepted */
 #define DBUSREPLIES	32	/* messages read waiting for a D-Bus reply */
 #define GAP		24	/* blank rows between parts of one toast */
@@ -248,7 +248,9 @@ help(void)
 	    "Forward Windows notifications from a VMware Workstation VM "
 	    "to the desktop.\n"
 	    "\n"
-	    "  -b x,y,w,h  watch this taskbar icon for a red badge\n"
+	    "  -b x,y,w,h  watch these taskbar icons for a red badge, none "
+	    "for none\n"
+	    "              (the bottom 48 rows, the taskbar)\n"
 	    "  -c sec      send no other red badge notification for sec after "
 	    "one\n"
 	    "              (30, at most 86400)\n"
@@ -285,7 +287,7 @@ help(void)
 	    "  match regex          like -m\n"
 	    "  server host::port    like server\n"
 	    "  toast x,y,w,h        like -t\n"
-	    "  badge x,y,w,h        like -b\n"
+	    "  badge x,y,w,h|none   like -b\n"
 	    "  interval sec         like -i\n"
 	    "  cooldown sec         like -c\n", VERSION);
 	exit(0);
@@ -2103,7 +2105,9 @@ unite(int a[4], const int b[4])
  * Count the clearly red pixels of r. Teams and Windows draw a badge of
  * fixed colours on the taskbar icon, whatever the theme: red with a
  * white mark or count for new activity, green, yellow or grey for
- * presence, and red too for busy.
+ * presence, and red too for busy. Other icons may be red as well, only
+ * a growing count tells of a badge turning red; icons moving along the
+ * taskbar keep it.
  */
 static int
 reds(const struct vnc *v, const struct region *r)
@@ -2143,6 +2147,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
     const regex_t *re, int interval, int cooldown)
 {
 	struct pollfd pfd;
+	struct region bar;
 	uint8_t *cur, *prev, *seen, *base, *tmp;
 	size_t len;
 	char *lasttext = NULL;
@@ -2150,7 +2155,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
-	int span = 0, wider = 0, red = 0, isred, n;
+	int span = 0, wider = 0, n, red = 0, wide;
 	int part[4], all[4], last[4];
 
 	len = (size_t)toast->w * toast->h;
@@ -2160,10 +2165,23 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
 
+	/* a badge region 0 wide spans the screen, whatever its size */
+	wide = badge != NULL && badge->w == 0;
+	if (badge != NULL) {
+		bar = *badge;
+		badge = &bar;
+	}
+	if (wide)
+		bar.w = v->w;
+
 	/* nothing is pending yet, servers answer this one at once */
 	vnc_refresh(v, toast, badge);
 	gen = v->gen;
 	dirty = 1;
+	if (wide && bar.w != v->w) {
+		bar.w = v->w;
+		filling = 1;
+	}
 
 	for (;;) {
 		/*
@@ -2200,6 +2218,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			gen = v->gen;
 			filling = 1;
 			fills = 0;
+			if (wide)
+				bar.w = v->w;
 		}
 		if (filling) {
 			area(v, toast, badge, box);
@@ -2239,12 +2259,9 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			 */
 			if (badge != NULL) {
 				n = reds(v, badge);
-				isred = n >= REDBADGE;
-				if (isred != red)
-					debug("taskbar icon %s, %d red pixels",
-					    isred ? "turned red" :
-					    "no longer red", n);
-				if (!fresh && isred && !red) {
+				if (n != red)
+					debug("taskbar: %d red pixels", n);
+				if (!fresh && n >= red + REDBADGE) {
 					if (t < quiet)
 						debug("taskbar icon turned red "
 						    "during the cooldown");
@@ -2256,7 +2273,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 						quiet = t + cooldown * 1000LL;
 					}
 				}
-				red = isred;
+				red = n;
 			}
 			fresh = 0;
 		}
@@ -2592,7 +2609,8 @@ int
 main(int argc, char *argv[])
 {
 	struct vnc v = { .fd = -1 };
-	struct region toast = { -420, -430, 420, 380 }, badge, *bp = NULL;
+	struct region toast = { -420, -430, 420, 380 };
+	struct region badge = { 0, -48, 0, 48 }, *bp = &badge;
 	regex_t re;
 	const char *host, *shot = NULL;
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
@@ -2676,10 +2694,11 @@ main(int argc, char *argv[])
 		rc[K_PASSWORD] = NULL;
 	}
 
-	if (opt[K_BADGE] != NULL) {
+	/* the whole taskbar at 100% scaling, see watch(), unless told */
+	if (opt[K_BADGE] != NULL && strcmp(opt[K_BADGE], "none") == 0)
+		bp = NULL;
+	else if (opt[K_BADGE] != NULL)
 		parse_region(opt[K_BADGE], &badge);
-		bp = &badge;
-	}
 	if (opt[K_COOLDOWN] != NULL)
 		cooldown = number(opt[K_COOLDOWN], 0, 86400, "cooldown");
 	if (opt[K_INTERVAL] != NULL)
@@ -2702,8 +2721,8 @@ main(int argc, char *argv[])
 	    host, port, toast.x, toast.y, toast.w, toast.h, interval,
 	    opt[K_MATCH]);
 	if (bp != NULL)
-		debug("badge %d,%d,%d,%d, cooldown %d", bp->x, bp->y, bp->w,
-		    bp->h, cooldown);
+		debug("badge %d,%d,%d,%d%s, cooldown %d", bp->x, bp->y, bp->w,
+		    bp->h, bp->w == 0 ? " (the screen width)" : "", cooldown);
 	debug("password %s", opt[K_PASSWORD] == NULL ? "not set" :
 	    envpw != NULL ? "from VNC_PASSWORD" : "from ~/.vmnotifyrc");
 

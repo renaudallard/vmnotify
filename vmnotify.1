@@ -88,19 +88,18 @@ The same goes for a new toast taking the place of one that went away
 at the same time, as when Windows shows a queued toast.
 When one of a stack goes away, nothing is sent.
 .Pp
-With
-.Fl b ,
-a taskbar icon is watched as well, for the badge Teams and Windows draw
-in its corner.
+The taskbar is watched as well, for the badge Teams and Windows draw in
+the corner of an icon.
 Teams keeps it green, yellow or grey with your presence and makes it red
 with a white mark or count on new activity, also when no toast is
 shown, as for a message in the chat already open.
 These colours are the same whatever the theme.
-When at least 40 clearly red pixels appear in the region, a
+When the clearly red pixels of the taskbar grow by at least 40, a
 .Dq Red badge on the taskbar icon
 notification is sent.
-The badge going away, presence changes and the mouse over the icon send
-nothing, and neither does a badge already red at start.
+The badge going away, presence changes, the mouse over an icon and
+icons moving along the taskbar send nothing, and neither does a badge
+already red at start.
 .Pp
 Only one
 .Nm
@@ -118,7 +117,10 @@ by
 .Ar h
 pixels at
 .Ar x , Ns Ar y
-for a red badge, the whole icon or its corner.
+for a red badge instead of the bottom 48 rows of the screen, the taskbar
+at 100% display scaling, or with
+.Cm none
+nothing.
 .It Fl c Ar sec
 Send no other red badge notification for
 .Ar sec
@@ -261,7 +263,7 @@ argument.
 .It Cm toast Ar x,y,w,h
 Like
 .Fl t .
-.It Cm badge Ar x,y,w,h
+.It Cm badge Ar x,y,w,h | Cm none
 Like
 .Fl b .
 .It Cm interval Ar sec
@@ -297,7 +299,6 @@ forwarding Teams and Outlook only:
 .Bd -literal -offset indent
 password secret
 match teams|outlook
-badge 525,-46,18,18
 .Ed
 .Pp
 Create it with the right permissions first:
