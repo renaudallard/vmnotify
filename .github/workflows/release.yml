@@ -26,7 +26,7 @@ jobs:
         run: |
           d=vmnotify-${GITHUB_REF_NAME#v}-linux-amd64
           mkdir "$d"
-          cp vmnotify vmnotify.1 vmnotify.service README.md LICENSE "$d"
+          cp vmnotify vmnotify.1 vmnotify.service install.sh README.md LICENSE "$d"
           tar -czf "$d.tar.gz" "$d"
           sha256sum "$d.tar.gz" > "$d.tar.gz.sha256"
 

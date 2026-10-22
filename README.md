@@ -55,8 +55,12 @@ Static Linux amd64 binaries are attached to the
 
     tar xzf vmnotify-*-linux-amd64.tar.gz
     cd vmnotify-*-linux-amd64
-    sudo install -m 755 vmnotify /usr/local/bin
-    sudo install -D -m 644 vmnotify.1 /usr/local/share/man/man1/vmnotify.1
+    sudo ./install.sh
+
+install.sh puts the binary and the manual page under `/usr/local`, or
+under the directory given as argument, and warns when tesseract or
+notify-send is missing. With another directory, adjust `ExecStart` in
+vmnotify.service if you use it.
 
 Or build from source with a C compiler and make:
 
