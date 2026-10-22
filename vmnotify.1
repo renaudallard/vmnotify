@@ -86,6 +86,11 @@ If the recognised text matches
 .Ar regex ,
 its first line is sent as summary and the remaining lines as body in a
 desktop notification, over D-Bus.
+Every summary starts with the name of the machine it comes from, so that
+several
+.Nm
+can be told apart: the desktop name the VNC server gives, or else the
+server address.
 The same text is only sent once while it stays on screen.
 Lines are compared by their ASCII letters and digits, ignoring case,
 and count as the same when at most a quarter of them differs, so that

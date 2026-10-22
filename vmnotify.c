@@ -132,6 +132,8 @@ static const char *keywords[NKEYS] = {
 static int verbose;
 static int debugging;
 static int logsyslog;
+/* the machine notifications come from: the VNC desktop name or server */
+static char machine[256];
 /* what we are waiting for, for error messages */
 static const char *stage = "connecting";
 
@@ -682,21 +684,26 @@ vnc_connect(struct vnc *v, const char *host, const char *port)
 	v->fd = fd;
 }
 
-/* Read the desktop name of ServerInit, for -V only. */
+static void	utf8(char *);
+
+/*
+ * Read the desktop name of ServerInit into machine. It comes from the
+ * server, keep control characters and invalid UTF-8 out.
+ */
 static void
 vnc_name(struct vnc *v, uint32_t len)
 {
-	char name[256];
 	uint32_t i, n;
 
-	n = len < sizeof(name) ? len : sizeof(name) - 1;
-	vread(v, name, n);
+	n = len < sizeof(machine) ? len : sizeof(machine) - 1;
+	vread(v, machine, n);
 	vskip(v, len - n);
 	for (i = 0; i < n; i++)
-		if (!isprint((unsigned char)name[i]))
-			name[i] = '?';
-	name[n] = '\0';
-	debug("server name \"%s\"%s", name, n < len ? ", truncated" : "");
+		if (iscntrl((unsigned char)machine[i]))
+			machine[i] = '?';
+	machine[n] = '\0';
+	utf8(machine);
+	debug("server name \"%s\"%s", machine, n < len ? ", truncated" : "");
 }
 
 static void
@@ -1665,14 +1672,19 @@ notify(const char *summary, const char *body)
 	struct buf args = { NULL, 0, 0 }, hello = { NULL, 0, 0 };
 	struct buf call = { NULL, 0, 0 };
 	struct timeval tv = { TIMEOUT, 0 };
-	char auth[64], line[256], err[256], *e;
+	char auth[64], line[256], err[256], *e, *from;
 	size_t len = 0;
 	uint32_t reply;
 	int fd, i, n, type = -1;
 
-	debug("sending a notification, summary \"%s\"", summary);
-	if ((fd = dbus_connect()) == -1)
+	/* the summary tells which machine it comes from */
+	if (asprintf(&from, "%s: %s", machine, summary) == -1)
+		fatal("asprintf");
+	debug("sending a notification, summary \"%s\"", from);
+	if ((fd = dbus_connect()) == -1) {
+		free(from);
 		return;
+	}
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1 ||
 	    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == -1)
 		fatal("setsockopt");
@@ -1703,7 +1715,7 @@ notify(const char *summary, const char *body)
 	bstr(&args, "vmnotify");
 	bu32(&args, 0);
 	bstr(&args, "");
-	bstr(&args, summary);
+	bstr(&args, from);
 	bstr(&args, e);
 	bu32(&args, 0);		/* no actions */
 	bu32(&args, 0);		/* no hints, padded for the dict entries */
@@ -1745,6 +1757,7 @@ out:
 	free(args.p);
 	free(hello.p);
 	free(call.p);
+	free(from);
 	close(fd);
 }
 
@@ -3022,7 +3035,7 @@ main(int argc, char *argv[])
 	regex_t re;
 	const char *host, *shot = NULL;
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
-	char port[8], *p;
+	char port[8], *p, *where;
 	int ch, error, fd, k, dflag = 0, interval = 1, cooldown = 30;
 
 	/* make sure 0, 1 and 2 are open, children rely on them */
@@ -3115,6 +3128,9 @@ main(int argc, char *argv[])
 		parse_region(opt[K_TOAST], &toast);
 	parse_server(opt[K_SERVER] != NULL ? opt[K_SERVER] :
 	    (char []){ "127.0.0.1::5900" }, &host, port, sizeof(port));
+	if (asprintf(&where, strchr(host, ':') != NULL ? "[%s]::%s" :
+	    "%s::%s", host, port) == -1)
+		fatal("asprintf");
 	if (opt[K_MATCH] == NULL)
 		opt[K_MATCH] = "teams|outlook|firefox";
 	if ((error = regcomp(&re, opt[K_MATCH],
@@ -3157,6 +3173,7 @@ main(int argc, char *argv[])
 		close(v.fd);
 		free(v.fb);
 		free(v.got);
+		free(where);
 		regfree(&re);
 		if (envpw != NULL) {
 			explicit_bzero(envpw, strlen(envpw));
@@ -3186,5 +3203,7 @@ main(int argc, char *argv[])
 	vnc_handshake(&v, opt[K_PASSWORD]);
 	if (opt[K_PASSWORD] != NULL)
 		explicit_bzero(opt[K_PASSWORD], strlen(opt[K_PASSWORD]));
+	if (machine[0] == '\0')
+		snprintf(machine, sizeof(machine), "%s", where);
 	watch(&v, &toast, bp, &re, interval, cooldown);
 }

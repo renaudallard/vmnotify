@@ -43,6 +43,10 @@ Two things are watched:
   These colours do not depend on the theme. `badge` sets another region,
   `badge none` turns this off.
 
+Every notification summary starts with the name of the machine, the
+desktop name the VNC server gives, so that notifications from several
+machines can be told apart.
+
 Nothing has to be set for the regions: at start, vmnotify finds the
 taskbar at the bottom of the screen, by its top edge, and puts the toast
 area of 420x380 pixels right above it, larger at a larger display
