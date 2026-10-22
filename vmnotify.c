@@ -83,6 +83,10 @@
 #define AROUND		20	/* pixels on each side judging the background */
 #define BLOCK		8	/* side of the blocks a toast fills */
 #define REFRESHES	10	/* requests to get a full update covered */
+#define REDMIN		140	/* a red badge pixel: red at least this, */
+#define REDOVERG	110	/* this much more red than green, */
+#define REDOVERB	40	/* this much more red than blue */
+#define REDBADGE	40	/* red pixels of a red badge, about 100 */
 #define DBUSMAX		65536	/* largest D-Bus message part accepted */
 #define DBUSREPLIES	32	/* messages read waiting for a D-Bus reply */
 #define GAP		24	/* blank rows between parts of one toast */
@@ -244,9 +248,9 @@ help(void)
 	    "Forward Windows notifications from a VMware Workstation VM "
 	    "to the desktop.\n"
 	    "\n"
-	    "  -b x,y,w,h  watch this taskbar icon for badge changes\n"
-	    "  -c sec      ignore taskbar icon changes for sec after one was "
-	    "sent\n"
+	    "  -b x,y,w,h  watch this taskbar icon for a red badge\n"
+	    "  -c sec      send no other red badge notification for sec after "
+	    "one\n"
 	    "              (30, at most 86400)\n"
 	    "  -d          run in the background and restart after errors\n"
 	    "  -h          show this help\n"
@@ -2095,6 +2099,34 @@ unite(int a[4], const int b[4])
 	a[3] = y1 - a[1];
 }
 
+/*
+ * Count the clearly red pixels of r. Teams and Windows draw a badge of
+ * fixed colours on the taskbar icon, whatever the theme: red with a
+ * white mark or count for new activity, green, yellow or grey for
+ * presence, and red too for busy.
+ */
+static int
+reds(const struct vnc *v, const struct region *r)
+{
+	const uint8_t *p;
+	int i, j, x, y, x0, y0, n = 0;
+
+	origin(v, r, &x0, &y0);
+	for (j = 0; j < r->h; j++) {
+		for (i = 0; i < r->w; i++) {
+			x = x0 + i;
+			y = y0 + j;
+			if (x < 0 || y < 0 || x >= v->w || y >= v->h)
+				continue;
+			p = v->fb + ((size_t)y * v->w + x) * 4;
+			if (p[2] >= REDMIN && p[2] >= p[1] + REDOVERG &&
+			    p[2] >= p[0] + REDOVERB)
+				n++;
+		}
+	}
+	return n;
+}
+
 /* Nothing would ever be seen there, say so. */
 static void
 offscreen(const struct vnc *v, const struct region *r, const char *name)
@@ -2111,26 +2143,20 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
     const regex_t *re, int interval, int cooldown)
 {
 	struct pollfd pfd;
-	uint8_t *cur, *prev, *seen, *base, *bcur = NULL, *bprev = NULL, *tmp;
-	size_t len, blen = 0;
+	uint8_t *cur, *prev, *seen, *base, *tmp;
+	size_t len;
 	char *lasttext = NULL;
 	long long t, changed = 0, nextreq = 0, quiet = 0;
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
-	int span = 0, wider = 0;
+	int span = 0, wider = 0, red = 0, isred, n;
 	int part[4], all[4], last[4];
 
 	len = (size_t)toast->w * toast->h;
 	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
 	    (seen = malloc(len)) == NULL || (base = malloc(len)) == NULL)
 		fatal("malloc");
-	if (badge != NULL) {
-		blen = (size_t)badge->w * badge->h;
-		if ((bcur = malloc(blen)) == NULL ||
-		    (bprev = malloc(blen)) == NULL)
-			fatal("malloc");
-	}
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
 
@@ -2206,22 +2232,31 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				changed = t;
 				unread = 1;
 			}
+			/*
+			 * Only a badge turning red tells of new activity. It
+			 * going away, presence changes and the mouse over the
+			 * icon do not. A red badge at start is not reported.
+			 */
 			if (badge != NULL) {
-				crop(v, badge, bcur);
-				if (!fresh && memcmp(bcur, bprev, blen) != 0) {
+				n = reds(v, badge);
+				isred = n >= REDBADGE;
+				if (isred != red)
+					debug("taskbar icon %s, %d red pixels",
+					    isred ? "turned red" :
+					    "no longer red", n);
+				if (!fresh && isred && !red) {
 					if (t < quiet)
-						debug("taskbar icon changed "
+						debug("taskbar icon turned red "
 						    "during the cooldown");
 					else {
-						show("taskbar icon", "changed");
-						notify("VM",
-						    "Taskbar icon changed");
+						show("taskbar icon",
+						    "red badge");
+						notify("VM", "Red badge on the "
+						    "taskbar icon");
 						quiet = t + cooldown * 1000LL;
 					}
 				}
-				tmp = bprev;
-				bprev = bcur;
-				bcur = tmp;
+				red = isred;
 			}
 			fresh = 0;
 		}

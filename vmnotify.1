@@ -90,11 +90,17 @@ When one of a stack goes away, nothing is sent.
 .Pp
 With
 .Fl b ,
-a taskbar icon is watched as well.
-Any change of its pixels, such as a badge appearing or the icon flashing,
-sends a
-.Dq Taskbar icon changed
-notification.
+a taskbar icon is watched as well, for the badge Teams and Windows draw
+in its corner.
+Teams keeps it green, yellow or grey with your presence and makes it red
+with a white mark or count on new activity, also when no toast is
+shown, as for a message in the chat already open.
+These colours are the same whatever the theme.
+When at least 40 clearly red pixels appear in the region, a
+.Dq Red badge on the taskbar icon
+notification is sent.
+The badge going away, presence changes and the mouse over the icon send
+nothing, and neither does a badge already red at start.
 .Pp
 Only one
 .Nm
@@ -112,11 +118,11 @@ by
 .Ar h
 pixels at
 .Ar x , Ns Ar y
-for changes.
+for a red badge, the whole icon or its corner.
 .It Fl c Ar sec
-Ignore changes of the taskbar icon for
+Send no other red badge notification for
 .Ar sec
-seconds after a taskbar icon notification.
+seconds after one.
 The default is 30, the maximum 86400.
 .It Fl d
 Run in the background and log to
@@ -167,7 +173,7 @@ logged.
 Implies
 .Fl v .
 .It Fl v
-Print the text read from the toast area and taskbar icon changes on
+Print the text read from the toast area and red badges on
 standard output, or with
 .Fl d
 to
@@ -291,7 +297,7 @@ forwarding Teams and Outlook only:
 .Bd -literal -offset indent
 password secret
 match teams|outlook
-badge 640,-40,48,40
+badge 525,-46,18,18
 .Ed
 .Pp
 Create it with the right permissions first:
@@ -336,5 +342,8 @@ text to the notification.
 .Pp
 Any window in the toast area whose text matches
 .Ar regex
-triggers a notification, and the taskbar icon also changes when its
-badge goes away or the mouse hovers over it.
+triggers a notification.
+.Pp
+Teams also makes its badge red when your presence is busy or do not
+disturb, as at the start of a meeting, which sends a red badge
+notification.

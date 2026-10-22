@@ -31,9 +31,13 @@ Two things are watched:
   differences count, never particular colours, so light and dark themes
   work alike, and light text on a dark toast is turned dark on light for
   tesseract.
-- optionally, a taskbar icon (for example Teams). When its pixels change,
-  e.g. a badge appears or the icon flashes, a "Taskbar icon changed"
-  notification is sent. Further changes are ignored for 30 seconds.
+- optionally, a taskbar icon, for the badge Teams draws in its corner. It
+  is green, yellow or grey with your presence and turns red with a white
+  mark or count on new activity, also when Teams shows no toast, as for a
+  message in the chat already open. When the badge turns red, a "Red
+  badge on the taskbar icon" notification is sent, then none for 30
+  seconds. The badge going away, presence changes and the mouse over the
+  icon send nothing. These colours do not depend on the theme.
 
 After a first full update, vmnotify only asks the VNC server for changes
 in the box covering the toast and taskbar areas, which it sends as they
@@ -132,8 +136,9 @@ remove it first:
    starting 420 pixels from the right edge and 430 from the bottom. That
    fits 100% display scaling. Negative x and y count from the right and
    bottom edges. Adjust it with `toast` in `~/.vmnotifyrc` if the toasts
-   are elsewhere, and pick the taskbar icon coordinates for `badge` from
-   the screenshot.
+   are elsewhere, and pick the coordinates of the Teams taskbar icon, or
+   of the badge in its corner, for `badge` from the screenshot. Pinning
+   Teams keeps the icon in place.
 
 6. Run it in the foreground with `-v` while a notification comes in, to
    see what is read and tune `match` if needed:
@@ -149,9 +154,9 @@ remove it first:
     vmnotify [-dhVv] [-b x,y,w,h] [-c sec] [-i sec] [-m regex] [-s file]
              [-t x,y,w,h] [server]
 
-    -b x,y,w,h  watch this taskbar icon for badge changes
-    -c sec      ignore taskbar icon changes for sec after a taskbar icon
-                notification (default: 30, at most 86400)
+    -b x,y,w,h  watch this taskbar icon for a red badge
+    -c sec      send no other red badge notification for sec after one
+                (default: 30, at most 86400)
     -d          run in the background, log to syslog and start again 30
                 seconds after any error, such as the VM being powered off
     -h          show the version and a summary of the options and of
@@ -199,7 +204,7 @@ by anyone else.
     server 127.0.0.1::5900
     # like -t, -b, -i and -c
     toast -420,-430,420,380
-    badge 640,-40,48,40
+    badge 525,-46,18,18
     interval 1
     cooldown 30
 
@@ -239,8 +244,9 @@ Logs:
   text to the notification.
 - Any window in the bottom right corner whose text matches the regex
   triggers a notification, once per distinct text.
-- A taskbar icon also changes when the badge goes away or the mouse hovers
-  over it.
+- Teams also makes its badge red when your presence is busy or do not
+  disturb, as at the start of a meeting, which sends a red badge
+  notification.
 
 ## License
 
