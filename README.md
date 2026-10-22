@@ -83,6 +83,13 @@ and start it again:
     sudo ./install.sh
     vmnotify -d
 
+When it runs as the systemd user service, restart the service instead,
+or it starts again by itself and one of the two finds the other
+running:
+
+    sudo ./install.sh
+    systemctl --user restart vmnotify
+
 Installing by hand as the README of 0.3.0 and earlier said may have
 left the manual page in a file named `/usr/local/share/man/man1`
 instead of a directory. install.sh checks that this file is the vmnotify
