@@ -45,9 +45,19 @@ server built into VMware and turns Windows notifications into desktop
 notifications on the host.
 Nothing runs inside the guest.
 .Pp
-After a first full update, only changes in the box covering the toast
-area and the taskbar icon are requested from the VNC server, which sends
-them as they happen.
+Unless set, the toast area and the taskbar are found on the first full
+update of the screen.
+Going up from the bottom of the screen, the first row under which most
+pixels change colour, between 24 and 160 rows up, is the top of the
+taskbar: its border, or the edge to what is above it.
+Without one, as when the taskbar is hidden, it is taken as 48 rows, its
+height at 100% display scaling.
+The toast area is 420 by 380 pixels in the right corner just above the
+taskbar, larger in proportion when the taskbar is higher than 48 rows, at
+a larger display scaling.
+After that, only changes in the box covering the toast area and the
+taskbar are requested from the VNC server, which sends them as they
+happen.
 The whole area is requested again after the screen size changed.
 When the toast area changed and then stayed the same for the time set
 with
@@ -117,8 +127,7 @@ by
 .Ar h
 pixels at
 .Ar x , Ns Ar y
-for a red badge instead of the bottom 48 rows of the screen, the taskbar
-at 100% display scaling, or with
+for a red badge instead of the taskbar, or with
 .Cm none
 nothing.
 .It Fl c Ar sec
@@ -157,10 +166,9 @@ This helps to find the coordinates for
 and
 .Fl t .
 .It Fl t Ar x,y,w,h
-The toast area.
-The default is
-.Ql -420,-430,420,380 ,
-which fits Windows 10 and 11 at 100% display scaling.
+The toast area, instead of the one found above the taskbar.
+At 100% display scaling, that is
+.Ql -420,-430,420,380 .
 .It Fl V
 Log every step with a timestamp on standard error, or with
 .Fl d
@@ -348,3 +356,7 @@ triggers a notification.
 Teams also makes its badge red when your presence is busy or do not
 disturb, as at the start of a meeting, which sends a red badge
 notification.
+.Pp
+The taskbar is only looked for at the bottom of the screen, and only at
+start: a taskbar on another edge, hidden at start, or a display scaling
+changed later needs the regions set.

@@ -38,9 +38,13 @@ Two things are watched:
   grow, a "Red badge on the taskbar icon" notification is sent, then none
   for 30 seconds. The badge going away, presence changes, the mouse over
   an icon and icons moving along the taskbar send nothing. These colours
-  do not depend on the theme. The bottom 48 rows of the screen are
-  watched, the taskbar at 100% display scaling; `badge` sets other ones,
-  `badge none` turns this off.
+  do not depend on the theme. `badge` sets another region, `badge none`
+  turns this off.
+
+Nothing has to be set for the regions: at start, vmnotify finds the
+taskbar at the bottom of the screen, by its top edge, and puts the toast
+area of 420x380 pixels right above it, larger at a larger display
+scaling.
 
 After a first full update, vmnotify only asks the VNC server for changes
 in the box covering the toast and taskbar areas, which it sends as they
@@ -131,16 +135,16 @@ remove it first:
    "Firefox" at the top and "via" the site at the bottom, which the
    default regex matches.
 
-5. Take a screenshot to check the regions:
+5. The toast area and the taskbar are found by themselves; `vmnotify -V`
+   logs what was found. When the taskbar is not at the bottom of the
+   screen, take a screenshot and set `toast` and `badge` in
+   `~/.vmnotifyrc`:
 
        vmnotify -s shot.ppm
 
-   The default toast area is `-420,-430,420,380`, meaning 420x380 pixels
-   starting 420 pixels from the right edge and 430 from the bottom. That
-   fits 100% display scaling. Negative x and y count from the right and
-   bottom edges. Adjust it with `toast` in `~/.vmnotifyrc` if the toasts
-   are elsewhere. With another display scaling, set `badge` to the
-   taskbar too.
+   A region is x,y,w,h, negative x and y count from the right and bottom
+   edges: `-420,-430,420,380` is 420x380 pixels starting 420 pixels from
+   the right edge and 430 from the bottom.
 
 6. Run it in the foreground with `-v` while a notification comes in, to
    see what is read and tune `match` if needed:
@@ -157,7 +161,7 @@ remove it first:
              [-t x,y,w,h] [server]
 
     -b x,y,w,h  watch these taskbar icons for a red badge, none for none
-                (default: the bottom 48 rows, the taskbar)
+                (default: the taskbar)
     -c sec      send no other red badge notification for sec after one
                 (default: 30, at most 86400)
     -d          run in the background, log to syslog and start again 30
@@ -169,7 +173,8 @@ remove it first:
     -m regex    only forward toasts whose text matches the case insensitive
                 extended regex (default: teams|outlook|firefox)
     -s file     save a screenshot of the VM to file as PPM and exit
-    -t x,y,w,h  toast area (default: -420,-430,420,380)
+    -t x,y,w,h  toast area (default: 420x380 above the taskbar, more at
+                a larger display scaling)
     -V          log every step to stderr (syslog with -d), the VNC
                 protocol included, but never the password; implies -v
     -v          print what is read, to syslog with -d
@@ -205,7 +210,7 @@ by anyone else.
     match teams|outlook|firefox
     # like the server argument
     server 127.0.0.1::5900
-    # like -t, -b, -i and -c
+    # like -t, -b, -i and -c; toast and badge are found when not set
     toast -420,-430,420,380
     badge 0,-48,1920,48
     interval 1

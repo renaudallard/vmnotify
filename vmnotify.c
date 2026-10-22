@@ -87,6 +87,10 @@
 #define REDOVERG	110	/* this much more red than green, */
 #define REDOVERB	40	/* this much more red than blue */
 #define REDBADGE	40	/* red pixels a red badge adds, about 100 */
+#define TASKBAR		48	/* rows of the taskbar at 100% scaling */
+#define TASKMIN		24	/* rows the taskbar top is looked for from */
+#define TASKMAX		160	/* and up to */
+#define EDGE		6	/* colour step of the taskbar top */
 #define DBUSMAX		65536	/* largest D-Bus message part accepted */
 #define DBUSREPLIES	32	/* messages read waiting for a D-Bus reply */
 #define GAP		24	/* blank rows between parts of one toast */
@@ -250,7 +254,7 @@ help(void)
 	    "\n"
 	    "  -b x,y,w,h  watch these taskbar icons for a red badge, none "
 	    "for none\n"
-	    "              (the bottom 48 rows, the taskbar)\n"
+	    "              (the taskbar)\n"
 	    "  -c sec      send no other red badge notification for sec after "
 	    "one\n"
 	    "              (30, at most 86400)\n"
@@ -264,7 +268,8 @@ help(void)
 	    "              regex (teams|outlook|firefox)\n"
 	    "  -s file     save a screenshot of the VM as PPM to file and "
 	    "exit\n"
-	    "  -t x,y,w,h  toast area (-420,-430,420,380)\n"
+	    "  -t x,y,w,h  toast area (420x380 above the taskbar, more at "
+	    "a larger scaling)\n"
 	    "  -V          log every step, the VNC protocol included, implies "
 	    "-v\n"
 	    "  -v          print what is read\n"
@@ -2131,6 +2136,60 @@ reds(const struct vnc *v, const struct region *r)
 	return n;
 }
 
+/*
+ * Return the height of the taskbar at the bottom of the screen: the first
+ * row from the bottom, between TASKMIN and TASKMAX, under which most
+ * pixels change colour. That is its top border, or the edge to what is
+ * above it. TASKBAR when there is none, as when it is hidden.
+ */
+static int
+taskbar(const struct vnc *v)
+{
+	const uint8_t *p, *q;
+	int h, x, n;
+
+	for (h = TASKMIN; h <= TASKMAX && h < v->h; h++) {
+		p = v->fb + (size_t)(v->h - h) * v->w * 4;
+		q = p - (size_t)v->w * 4;
+		for (n = x = 0; x < v->w; x++, p += 4, q += 4)
+			n += abs(p[0] - q[0]) > EDGE ||
+			    abs(p[1] - q[1]) > EDGE || abs(p[2] - q[2]) > EDGE;
+		if (2 * n >= v->w)
+			return h;
+	}
+	return TASKBAR;
+}
+
+/*
+ * Set the regions to find, those 0 wide: the badge region to the
+ * taskbar, the toast area right above it, made larger with the display
+ * scaling the taskbar height tells of.
+ */
+static void
+place(const struct vnc *v, struct region *toast, struct region *badge,
+    int findtoast, int findbadge)
+{
+	int h, s;
+
+	h = taskbar(v);
+	debug("taskbar %d rows high", h);
+	s = h > TASKBAR ? h : TASKBAR;
+	if (findbadge) {
+		badge->x = 0;
+		badge->y = -h;
+		badge->w = v->w;
+		badge->h = h;
+	}
+	if (findtoast) {
+		toast->w = 420 * s / TASKBAR;
+		toast->h = 380 * s / TASKBAR;
+		toast->x = -toast->w;
+		toast->y = -(h + 2 + toast->h);
+		debug("toast area %d,%d,%d,%d", toast->x, toast->y,
+		    toast->w, toast->h);
+	}
+}
+
 /* Nothing would ever be seen there, say so. */
 static void
 offscreen(const struct vnc *v, const struct region *r, const char *name)
@@ -2147,7 +2206,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
     const regex_t *re, int interval, int cooldown)
 {
 	struct pollfd pfd;
-	struct region bar;
+	struct region tr, bar = { 0, 0, 0, 0 };
 	uint8_t *cur, *prev, *seen, *base, *tmp;
 	size_t len;
 	char *lasttext = NULL;
@@ -2155,33 +2214,36 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
-	int span = 0, wider = 0, n, red = 0, wide;
+	int span = 0, wider = 0, n, red = 0, findtoast, findbadge;
 	int part[4], all[4], last[4];
 
-	len = (size_t)toast->w * toast->h;
-	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
-	    (seen = malloc(len)) == NULL || (base = malloc(len)) == NULL)
-		fatal("malloc");
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
 
-	/* a badge region 0 wide spans the screen, whatever its size */
-	wide = badge != NULL && badge->w == 0;
+	/*
+	 * Regions 0 wide are found along the taskbar, on the whole screen
+	 * fetched once. Nothing is pending yet, servers answer at once.
+	 */
+	tr = *toast;
+	toast = &tr;
 	if (badge != NULL) {
 		bar = *badge;
 		badge = &bar;
 	}
-	if (wide)
-		bar.w = v->w;
-
-	/* nothing is pending yet, servers answer this one at once */
-	vnc_refresh(v, toast, badge);
+	findtoast = tr.w == 0;
+	findbadge = badge != NULL && bar.w == 0;
+	if (findtoast || findbadge) {
+		vnc_refresh(v, NULL, NULL);
+		place(v, &tr, &bar, findtoast, findbadge);
+	} else
+		vnc_refresh(v, toast, badge);
 	gen = v->gen;
 	dirty = 1;
-	if (wide && bar.w != v->w) {
-		bar.w = v->w;
-		filling = 1;
-	}
+
+	len = (size_t)tr.w * tr.h;
+	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
+	    (seen = malloc(len)) == NULL || (base = malloc(len)) == NULL)
+		fatal("malloc");
 
 	for (;;) {
 		/*
@@ -2218,7 +2280,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			gen = v->gen;
 			filling = 1;
 			fills = 0;
-			if (wide)
+			/* the taskbar is as wide as the screen */
+			if (findbadge)
 				bar.w = v->w;
 		}
 		if (filling) {
@@ -2609,8 +2672,8 @@ int
 main(int argc, char *argv[])
 {
 	struct vnc v = { .fd = -1 };
-	struct region toast = { -420, -430, 420, 380 };
-	struct region badge = { 0, -48, 0, 48 }, *bp = &badge;
+	struct region toast = { 0, 0, 0, 0 };
+	struct region badge = { 0, 0, 0, 0 }, *bp = &badge;
 	regex_t re;
 	const char *host, *shot = NULL;
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
@@ -2694,7 +2757,7 @@ main(int argc, char *argv[])
 		rc[K_PASSWORD] = NULL;
 	}
 
-	/* the whole taskbar at 100% scaling, see watch(), unless told */
+	/* regions not set are found by watch(), 0 wide until then */
 	if (opt[K_BADGE] != NULL && strcmp(opt[K_BADGE], "none") == 0)
 		bp = NULL;
 	else if (opt[K_BADGE] != NULL)
@@ -2717,12 +2780,20 @@ main(int argc, char *argv[])
 		fatalx("match: %s", msg);
 	}
 
-	debug("server %s port %s, toast %d,%d,%d,%d, interval %d, match %s",
-	    host, port, toast.x, toast.y, toast.w, toast.h, interval,
-	    opt[K_MATCH]);
-	if (bp != NULL)
-		debug("badge %d,%d,%d,%d%s, cooldown %d", bp->x, bp->y, bp->w,
-		    bp->h, bp->w == 0 ? " (the screen width)" : "", cooldown);
+	debug("server %s port %s, interval %d, match %s", host, port,
+	    interval, opt[K_MATCH]);
+	if (toast.w == 0)
+		debug("toast area above the taskbar");
+	else
+		debug("toast area %d,%d,%d,%d", toast.x, toast.y, toast.w,
+		    toast.h);
+	if (bp == NULL)
+		debug("no badge region");
+	else if (bp->w == 0)
+		debug("badge region the taskbar, cooldown %d", cooldown);
+	else
+		debug("badge region %d,%d,%d,%d, cooldown %d", bp->x, bp->y,
+		    bp->w, bp->h, cooldown);
 	debug("password %s", opt[K_PASSWORD] == NULL ? "not set" :
 	    envpw != NULL ? "from VNC_PASSWORD" : "from ~/.vmnotifyrc");
 
