@@ -2110,7 +2110,6 @@ static struct bpf filter[] = {
 	SC(SYS_mremap, SC_ALLOW),
 	SC(SYS_madvise, SC_ALLOW),
 	SC(SYS_fstat, SC_ALLOW),
-	SC(SYS_newfstatat, SC_ALLOW),
 	SC(SYS_lseek, SC_ALLOW),
 	SC(SYS_getpid, SC_ALLOW),
 	SC(SYS_gettid, SC_ALLOW),
@@ -2128,6 +2127,8 @@ static struct bpf filter[] = {
 	SC(SYS_open, SC_ERRNO | EPERM),
 #endif
 	SC(SYS_openat, SC_ERRNO | EPERM),
+	/* takes a path, glibc fstat(2) uses it too and copes */
+	SC(SYS_newfstatat, SC_ERRNO | EPERM),
 #ifdef SYS_statx
 	SC(SYS_statx, SC_ERRNO | EPERM),
 #endif
