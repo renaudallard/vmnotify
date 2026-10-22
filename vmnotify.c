@@ -2056,8 +2056,16 @@ struct bpfprog {
 	{ BPF_JSET_K, 1, 0, PROT_EXEC }, { BPF_RET_K, 0, 0, SC_ALLOW }, \
 	{ BPF_RET_K, 0, 0, SC_KILL }
 
-#if defined(SC_AUDIT_ARCH) && !defined(__SANITIZE_ADDRESS__) && \
-    !defined(NOSECCOMP)
+/* sanitizers make system calls of their own, gcc and clang tell apart */
+#if defined(__SANITIZE_ADDRESS__) && !defined(NOSECCOMP)
+#define NOSECCOMP
+#endif
+#ifdef __has_feature
+#if __has_feature(address_sanitizer) && !defined(NOSECCOMP)
+#define NOSECCOMP
+#endif
+#endif
+#if defined(SC_AUDIT_ARCH) && !defined(NOSECCOMP)
 #define SANDBOX
 static const struct bpf filter[] = {
 	{ BPF_LD_W_ABS, 0, 0, SC_ARCH },
