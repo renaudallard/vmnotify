@@ -194,9 +194,22 @@ remove it first:
 Regions are at most 4096 by 4096 pixels, and the guest screen at most
 8192 by 8192.
 
-With `-d`, ps(1) shows two processes: `vmnotify: monitor` followed by
-the server, which starts the watching one again after errors, and
-`vmnotify: watcher` followed by the machine name and the server.
+With `-d`, ps(1) shows three processes: `vmnotify: monitor` followed by
+the server, which starts the watching one again after errors,
+`vmnotify: watcher` followed by the machine name and the server, and
+`vmnotify: helper`.
+
+## Security
+
+Everything the VNC server sends, the guest screen included, is read by
+the watcher under a seccomp filter set right after connecting: it may
+only read and write what it has open, poll, handle its memory, never
+executable, and tell the time. Opening files, creating sockets and ioctl
+fail; any other system call ends it, and `-d` logs that before starting
+again. Running tesseract and sending D-Bus notifications need much more,
+and tesseract would inherit the filter, so a helper process forked
+before it, `vmnotify: helper`, does both for the watcher over a socket
+pair and checks every request. The filter works on amd64 and arm64.
 
 Only one vmnotify watches at a time, it holds a lock on
 `$XDG_RUNTIME_DIR/vmnotify.lock` (or `~/.vmnotify.lock`), which also

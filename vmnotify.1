@@ -167,9 +167,12 @@ The process starting it again shows as
 .Dq vmnotify: monitor
 in
 .Xr ps 1 ,
-followed by the server, and the one watching as
+followed by the server, the one watching as
 .Dq vmnotify: watcher ,
-followed by the machine name and the server.
+followed by the machine name and the server, and its helper as
+.Dq vmnotify: helper ,
+see
+.Sx SECURITY CONSIDERATIONS .
 .It Fl h
 Show the version and a summary of the options and of
 .Pa ~/.vmnotifyrc ,
@@ -394,3 +397,24 @@ notification.
 The taskbar is only looked for at the bottom of the screen, and only at
 start: a taskbar on another edge, hidden at start, or a display scaling
 changed later needs the regions set.
+.Sh SECURITY CONSIDERATIONS
+Everything the VNC server sends, the guest screen included, is read by
+the watching process under a seccomp filter, set right after connecting.
+It may only read and write what it has open, wait for it, handle its
+memory, never made executable, and tell the time.
+Opening files, creating sockets and
+.Xr ioctl 2
+fail; any other system call ends it, and with
+.Fl d
+the restart is logged as such.
+.Pp
+Running
+.Xr tesseract 1
+and sending notifications over D-Bus need much more, and tesseract
+would inherit the filter.
+A helper process, forked before the filter is set and shown as
+.Dq vmnotify: helper ,
+does both for the watcher, over a socket pair, and checks what it is
+asked.
+The filter is not used in builds with AddressSanitizer, nor on other
+architectures than amd64 and arm64.

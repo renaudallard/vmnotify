@@ -38,6 +38,8 @@
 
 #include <sys/types.h>
 #include <sys/file.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -62,6 +64,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
@@ -140,6 +143,7 @@ static char machine[256];
 /* where the arguments and environment were, for the process title */
 static char *title;
 static size_t titlelen;
+static char **argcopy;		/* the arguments, moved */
 /* what we are waiting for, for error messages */
 static const char *stage = "connecting";
 
@@ -693,6 +697,8 @@ vnc_connect(struct vnc *v, const char *host, const char *port)
 }
 
 static void	utf8(char *);
+static void	setproctitle(const char *, ...)
+		    __attribute__((__format__(__printf__, 1, 2)));
 
 /*
  * Read the desktop name of ServerInit into machine. It comes from the
@@ -1335,34 +1341,23 @@ tidy(char *s)
 	*o = '\0';
 }
 
+/* Run tesseract on the w by h grey pixels of img, return what it read. */
 static char *
-ocr(const uint8_t *img, int stride, const int box[4])
+tesseract(const uint8_t *img, int w, int h)
 {
 	char *argv[] = { "tesseract", "stdin", "stdout", NULL };
 	char hdr[64], *text, buf[4096];
-	uint8_t *flat, *big;
-	size_t len = 0, bigsz;
+	size_t len = 0;
 	ssize_t n;
-	long long start;
 	pid_t pid;
-	int in[2], out[2], hlen, y, w = box[2], h = box[3];
+	int in[2], out[2], hlen;
 
-	bigsz = (size_t)w * h * 4;
-	if ((flat = malloc((size_t)w * h)) == NULL ||
-	    (big = malloc(bigsz)) == NULL || (text = malloc(MAXOCR)) == NULL)
+	if ((text = malloc(MAXOCR)) == NULL)
 		fatal("malloc");
-	for (y = 0; y < h; y++)
-		memcpy(flat + (size_t)y * w,
-		    img + (size_t)(box[1] + y) * stride + box[0], w);
-	polarity(flat, w, h);
-	upscale(flat, w, h, big);
-	free(flat);
-	hlen = snprintf(hdr, sizeof(hdr), "P5\n%d %d\n255\n", w * 2, h * 2);
-
+	hlen = snprintf(hdr, sizeof(hdr), "P5\n%d %d\n255\n", w, h);
 	if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1)
 		fatal("pipe");
-	debug("running tesseract on %dx%d", w * 2, h * 2);
-	start = now();
+	debug("running tesseract on %dx%d", w, h);
 	if ((pid = spawn(argv, in[0], out[1])) == -1)
 		fatal("tesseract");
 	close(in[0]);
@@ -1370,10 +1365,9 @@ ocr(const uint8_t *img, int stride, const int box[4])
 
 	/* tesseract reads all of its input before writing anything. */
 	if (writeall(in[1], hdr, hlen) == -1 ||
-	    writeall(in[1], big, bigsz) == -1)
+	    writeall(in[1], img, (size_t)w * h) == -1)
 		log_warn("write to tesseract");
 	close(in[1]);
-	free(big);
 
 	for (;;) {
 		if ((n = read(out[0], buf, sizeof(buf))) == -1) {
@@ -1390,9 +1384,38 @@ ocr(const uint8_t *img, int stride, const int box[4])
 	}
 	close(out[0]);
 	text[len] = '\0';
-
 	if (reap(pid, "tesseract") != 0)
 		text[0] = '\0';
+	return text;
+}
+
+static char	*helper_ocr(const uint8_t *, int, int);
+
+/*
+ * Read box of the toast area img, stride pixels wide: turned dark on
+ * light, scaled up twice, read by tesseract in the helper.
+ */
+static char *
+ocr(const uint8_t *img, int stride, const int box[4])
+{
+	char *text;
+	uint8_t *flat, *big;
+	long long start;
+	int y, w = box[2], h = box[3];
+
+	if ((flat = malloc((size_t)w * h)) == NULL ||
+	    (big = malloc((size_t)w * h * 4)) == NULL)
+		fatal("malloc");
+	for (y = 0; y < h; y++)
+		memcpy(flat + (size_t)y * w,
+		    img + (size_t)(box[1] + y) * stride + box[0], w);
+	polarity(flat, w, h);
+	upscale(flat, w, h, big);
+	free(flat);
+
+	start = now();
+	text = helper_ocr(big, w * 2, h * 2);
+	free(big);
 	utf8(text);
 	tidy(text);
 	debug("tesseract took %lld ms, %zu bytes of text", now() - start,
@@ -1751,24 +1774,19 @@ bad:
  * Failures are only logged, the notification is lost.
  */
 static void
-notify(const char *summary, const char *body)
+dbus_notify(const char *summary, const char *body)
 {
 	struct buf args = { NULL, 0, 0 }, hello = { NULL, 0, 0 };
 	struct buf call = { NULL, 0, 0 };
 	struct timeval tv = { TIMEOUT, 0 };
-	char auth[64], line[256], err[256], *e, *from;
+	char auth[64], line[256], err[256], *e;
 	size_t len = 0;
 	uint32_t reply;
 	int fd, i, n, type = -1;
 
-	/* the summary tells which machine it comes from */
-	if (asprintf(&from, "%s: %s", machine, summary) == -1)
-		fatal("asprintf");
-	debug("sending a notification, summary \"%s\"", from);
-	if ((fd = dbus_connect()) == -1) {
-		free(from);
+	debug("sending a notification, summary \"%s\"", summary);
+	if ((fd = dbus_connect()) == -1)
 		return;
-	}
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1 ||
 	    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == -1)
 		fatal("setsockopt");
@@ -1799,7 +1817,7 @@ notify(const char *summary, const char *body)
 	bstr(&args, "vmnotify");
 	bu32(&args, 0);
 	bstr(&args, "");
-	bstr(&args, from);
+	bstr(&args, summary);
 	bstr(&args, e);
 	bu32(&args, 0);		/* no actions */
 	bu32(&args, 0);		/* no hints, padded for the dict entries */
@@ -1841,8 +1859,267 @@ out:
 	free(args.p);
 	free(hello.p);
 	free(call.p);
-	free(from);
 	close(fd);
+}
+
+/*
+ * Privilege separation. The watcher reads what the VNC server sends
+ * under a seccomp filter, see sandbox(). The helper, forked before,
+ * runs tesseract and sends the notifications for it, which needs much
+ * more, and tesseract would inherit the filter. They talk over a socket
+ * pair: an 'o' request with the width, height and grey pixels of an
+ * image is answered with the length and the text read; an 'n' request
+ * carries the lengths and text of the summary and body of a
+ * notification, it is not answered. Lengths are 32 bits, big endian.
+ */
+
+static int helper = -1;		/* the watcher's end of the socket pair */
+
+static char *
+helper_ocr(const uint8_t *img, int w, int h)
+{
+	uint8_t msg[9];
+	uint32_t len;
+	char *text;
+
+	msg[0] = 'o';
+	put32(msg + 1, w);
+	put32(msg + 5, h);
+	if (writeall(helper, msg, sizeof(msg)) == -1 ||
+	    writeall(helper, img, (size_t)w * h) == -1 ||
+	    readall(helper, msg, 4) == -1)
+		fatalx("lost the helper");
+	if ((len = get32(msg)) >= MAXOCR)
+		fatalx("the helper sent %u bytes of text", len);
+	if ((text = malloc(len + 1)) == NULL)
+		fatal("malloc");
+	if (readall(helper, text, len) == -1)
+		fatalx("lost the helper");
+	text[len] = '\0';
+	return text;
+}
+
+/* Send a notification, its summary telling the machine it comes from. */
+static void
+notify(const char *summary, const char *body)
+{
+	uint8_t msg[4];
+	char *from;
+
+	if (asprintf(&from, "%s: %s", machine, summary) == -1)
+		fatal("asprintf");
+	put32(msg, strlen(from));
+	if (writeall(helper, "n", 1) == -1 ||
+	    writeall(helper, msg, 4) == -1 ||
+	    writeall(helper, from, strlen(from)) == -1)
+		fatalx("lost the helper");
+	put32(msg, strlen(body));
+	if (writeall(helper, msg, 4) == -1 ||
+	    writeall(helper, body, strlen(body)) == -1)
+		fatalx("lost the helper");
+	free(from);
+}
+
+/*
+ * Read len bytes from the watcher, the helper ends when it is gone,
+ * leaving the stdio buffers it was forked with to the watcher.
+ */
+static void
+hread(int fd, void *p, size_t len)
+{
+	if (readall(fd, p, len) == -1)
+		_exit(0);
+}
+
+/*
+ * The helper: answer the requests of the watcher, which reads what the
+ * VNC server sends and so are checked like that.
+ */
+static void __attribute__((__noreturn__))
+helper_loop(int fd)
+{
+	uint8_t msg[8], cmd, *img;
+	uint32_t w, h, len;
+	char *text, *str[2];
+	int i;
+
+	for (;;) {
+		hread(fd, &cmd, 1);
+		if (cmd == 'o') {
+			hread(fd, msg, 8);
+			w = get32(msg);
+			h = get32(msg + 4);
+			if (w == 0 || h == 0 || w > 2 * MAXREGION ||
+			    h > 2 * MAXREGION)
+				fatalx("bad image from the watcher");
+			if ((img = malloc((size_t)w * h)) == NULL)
+				fatal("malloc");
+			hread(fd, img, (size_t)w * h);
+			text = tesseract(img, w, h);
+			free(img);
+			len = strlen(text);
+			put32(msg, len);
+			if (writeall(fd, msg, 4) == -1 ||
+			    writeall(fd, text, len) == -1)
+				_exit(0);
+			free(text);
+		} else if (cmd == 'n') {
+			for (i = 0; i < 2; i++) {
+				hread(fd, msg, 4);
+				if ((len = get32(msg)) > 2 * MAXOCR)
+					fatalx("bad notification from the "
+					    "watcher");
+				if ((str[i] = malloc(len + 1)) == NULL)
+					fatal("malloc");
+				hread(fd, str[i], len);
+				str[i][len] = '\0';
+				utf8(str[i]);
+			}
+			dbus_notify(str[0], str[1]);
+			free(str[0]);
+			free(str[1]);
+		} else
+			fatalx("bad request from the watcher");
+	}
+}
+
+/* Fork the helper, the watcher keeps its end of the socket pair. */
+static void
+helper_start(int vncfd, const char *where)
+{
+	pid_t pid;
+	int sv[2];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) == -1)
+		fatal("socketpair");
+	if ((pid = fork()) == -1)
+		fatal("fork");
+	if (pid == 0) {
+		close(sv[0]);
+		close(vncfd);
+		setproctitle("vmnotify: helper %s", where);
+		helper_loop(sv[1]);
+	}
+	close(sv[1]);
+	helper = sv[0];
+	debug("started helper %ld", (long)pid);
+}
+
+/*
+ * The seccomp filter of the watcher, written out as the headers giving
+ * it may be missing, as with musl. Past the architecture, x32 calls are
+ * refused, then each system call allowed is listed. Opening files,
+ * sockets and ioctl fail with EPERM, libc may try them, as syslog to
+ * connect again; anything else ends the watcher.
+ */
+#define BPF_LD_W_ABS	0x20	/* BPF_LD | BPF_W | BPF_ABS */
+#define BPF_JEQ_K	0x15	/* BPF_JMP | BPF_JEQ | BPF_K */
+#define BPF_JSET_K	0x45	/* BPF_JMP | BPF_JSET | BPF_K */
+#define BPF_RET_K	0x06	/* BPF_RET | BPF_K */
+#define SC_ALLOW	0x7fff0000U
+#define SC_ERRNO	0x00050000U
+#define SC_KILL		0x80000000U	/* the whole process */
+#define SC_FILTER	2	/* SECCOMP_MODE_FILTER */
+#define SC_NR		0	/* offsetof(struct seccomp_data, nr) */
+#define SC_ARCH		4	/* offsetof(struct seccomp_data, arch) */
+#define SC_ARG2		32	/* low half of args[2] */
+#define SC_X32		0x40000000U
+#if defined(__x86_64__)
+#define SC_AUDIT_ARCH	0xc000003eU
+#elif defined(__aarch64__)
+#define SC_AUDIT_ARCH	0xc00000b7U
+#endif
+
+struct bpf {
+	uint16_t	code;
+	uint8_t		jt;
+	uint8_t		jf;
+	uint32_t	k;
+};
+
+struct bpfprog {
+	unsigned short	 len;
+	const struct bpf *filter;
+};
+
+#define SC(nr, action) \
+	{ BPF_JEQ_K, 0, 1, (nr) }, { BPF_RET_K, 0, 0, (action) }
+/* memory is never made executable */
+#define SC_NOEXEC(nr) \
+	{ BPF_JEQ_K, 0, 4, (nr) }, { BPF_LD_W_ABS, 0, 0, SC_ARG2 }, \
+	{ BPF_JSET_K, 1, 0, PROT_EXEC }, { BPF_RET_K, 0, 0, SC_ALLOW }, \
+	{ BPF_RET_K, 0, 0, SC_KILL }
+
+#if defined(SC_AUDIT_ARCH) && !defined(__SANITIZE_ADDRESS__) && \
+    !defined(NOSECCOMP)
+#define SANDBOX
+static const struct bpf filter[] = {
+	{ BPF_LD_W_ABS, 0, 0, SC_ARCH },
+	{ BPF_JEQ_K, 1, 0, SC_AUDIT_ARCH },
+	{ BPF_RET_K, 0, 0, SC_KILL },
+	{ BPF_LD_W_ABS, 0, 0, SC_NR },
+	{ BPF_JSET_K, 0, 1, SC_X32 },
+	{ BPF_RET_K, 0, 0, SC_KILL },
+	SC(SYS_read, SC_ALLOW),
+	SC(SYS_write, SC_ALLOW),
+	SC(SYS_readv, SC_ALLOW),
+	SC(SYS_writev, SC_ALLOW),
+	SC(SYS_close, SC_ALLOW),
+#ifdef SYS_poll
+	SC(SYS_poll, SC_ALLOW),
+#endif
+	SC(SYS_ppoll, SC_ALLOW),
+	SC(SYS_clock_gettime, SC_ALLOW),
+	SC(SYS_gettimeofday, SC_ALLOW),
+	SC(SYS_brk, SC_ALLOW),
+	SC_NOEXEC(SYS_mmap),
+	SC_NOEXEC(SYS_mprotect),
+	SC(SYS_munmap, SC_ALLOW),
+	SC(SYS_mremap, SC_ALLOW),
+	SC(SYS_madvise, SC_ALLOW),
+	SC(SYS_fstat, SC_ALLOW),
+	SC(SYS_newfstatat, SC_ALLOW),
+	SC(SYS_lseek, SC_ALLOW),
+	SC(SYS_getpid, SC_ALLOW),
+	SC(SYS_sendto, SC_ALLOW),
+	SC(SYS_futex, SC_ALLOW),
+	SC(SYS_getrandom, SC_ALLOW),
+	SC(SYS_rt_sigprocmask, SC_ALLOW),
+	SC(SYS_rt_sigreturn, SC_ALLOW),
+	SC(SYS_restart_syscall, SC_ALLOW),
+	SC(SYS_exit, SC_ALLOW),
+	SC(SYS_exit_group, SC_ALLOW),
+#ifdef SYS_open
+	SC(SYS_open, SC_ERRNO | EPERM),
+#endif
+	SC(SYS_openat, SC_ERRNO | EPERM),
+#ifdef SYS_statx
+	SC(SYS_statx, SC_ERRNO | EPERM),
+#endif
+	SC(SYS_socket, SC_ERRNO | EPERM),
+	SC(SYS_connect, SC_ERRNO | EPERM),
+	SC(SYS_ioctl, SC_ERRNO | EPERM),
+	{ BPF_RET_K, 0, 0, SC_KILL }
+};
+#endif
+
+/* Put the watcher under its seccomp filter, for good. */
+static void
+sandbox(void)
+{
+#ifdef SANDBOX
+	struct bpfprog prog = { sizeof(filter) / sizeof(filter[0]), filter };
+
+	/* syslog takes the time zone the first time, take it before */
+	tzset();
+	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1 ||
+	    prctl(PR_SET_SECCOMP, SC_FILTER, &prog) == -1)
+		fatal("seccomp");
+	debug("seccomp filter on, %zu instructions", sizeof(filter) /
+	    sizeof(filter[0]));
+#else
+	debug("no seccomp filter in this build");
+#endif
 }
 
 /* Main loop */
@@ -2963,7 +3240,7 @@ inittitle(int argc, char *argv[])
 		if (environ[i] == end)
 			end = environ[i] + strlen(environ[i]) + 1;
 
-	if ((nargv = calloc(argc + 1, sizeof(*nargv))) == NULL)
+	if ((nargv = argcopy = calloc(argc + 1, sizeof(*nargv))) == NULL)
 		fatal("calloc");
 	for (i = 0; i < argc; i++)
 		if ((nargv[i] = strdup(argv[i])) == NULL)
@@ -3087,7 +3364,11 @@ supervise(const char *where)
 		while (waitpid(pid, &status, 0) == -1)
 			if (errno != EINTR)
 				fatal("waitpid");
-		if (WIFSIGNALED(status))
+		if (WIFSIGNALED(status) && WTERMSIG(status) == SIGSYS)
+			log_warnx("watcher made a system call its seccomp "
+			    "filter does not allow, restarting in %d seconds",
+			    RETRY);
+		else if (WIFSIGNALED(status))
 			log_warnx("watcher killed by signal %d, restarting "
 			    "in %d seconds", WTERMSIG(status), RETRY);
 		else
@@ -3173,7 +3454,7 @@ main(int argc, char *argv[])
 	regex_t re;
 	const char *host, *shot = NULL;
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
-	char port[8], *p, *where, **args;
+	char port[8], *p, *where;
 	int ch, error, fd, k, dflag = 0, interval = 1, cooldown = 30;
 
 	/* make sure 0, 1 and 2 are open, children rely on them */
@@ -3185,7 +3466,7 @@ main(int argc, char *argv[])
 	/* waitpid needs SIGCHLD not to be ignored, it may be inherited */
 	signal(SIGCHLD, SIG_DFL);
 
-	argv = args = inittitle(argc, argv);
+	argv = inittitle(argc, argv);
 
 	/* + makes glibc stop at the server like musl does */
 	while ((ch = getopt(argc, argv, "+b:c:dhi:m:s:t:Vv")) != -1) {
@@ -3326,10 +3607,10 @@ main(int argc, char *argv[])
 		free(v.got);
 		free(where);
 		regfree(&re);
-		for (k = 0; title != NULL && args[k] != NULL; k++)
-			free(args[k]);
+		for (k = 0; title != NULL && argcopy[k] != NULL; k++)
+			free(argcopy[k]);
 		if (title != NULL)
-			free(args);
+			free(argcopy);
 		if (envpw != NULL) {
 			explicit_bzero(envpw, strlen(envpw));
 			free(envpw);
@@ -3347,7 +3628,8 @@ main(int argc, char *argv[])
 	if (dflag) {
 		if (daemon(0, 0) == -1)
 			fatal("daemon");
-		openlog("vmnotify", LOG_PID, LOG_USER);
+		/* connected now, the watcher could not later */
+		openlog("vmnotify", LOG_PID | LOG_NDELAY, LOG_USER);
 		logsyslog = 1;
 		writepid(fd);
 		setproctitle("vmnotify: monitor %s", where);
@@ -3357,7 +3639,10 @@ main(int argc, char *argv[])
 		setproctitle("vmnotify: watcher %s", where);
 	}
 
+	/* all the server sends is read under seccomp, the helper does more */
 	vnc_connect(&v, host, port);
+	helper_start(v.fd, where);
+	sandbox();
 	vnc_handshake(&v, opt[K_PASSWORD]);
 	if (opt[K_PASSWORD] != NULL)
 		explicit_bzero(opt[K_PASSWORD], strlen(opt[K_PASSWORD]));
