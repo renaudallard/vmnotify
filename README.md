@@ -79,7 +79,7 @@ A static binary can be built with musl:
 To upgrade, stop a running vmnotify, install the new one the same way
 and start it again:
 
-    kill $(cat $XDG_RUNTIME_DIR/vmnotify.lock)    # or ~/.vmnotify.lock
+    pkill -x vmnotify
     sudo ./install.sh
     vmnotify -d
 
