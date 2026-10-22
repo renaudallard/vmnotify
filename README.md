@@ -31,15 +31,17 @@ Two things are watched:
   differences count, never particular colours, so light and dark themes
   work alike, and light text on a dark toast is turned dark on light for
   tesseract.
-- the taskbar, for the badge Teams draws in the corner of its icon. It
-  is green, yellow or grey with your presence and turns red with a white
-  mark or count on new activity, also when Teams shows no toast, as for a
+- the taskbar, for the badge Teams draws in the corner of its icon. It is
+  green, yellow or grey with your presence and turns red with a white mark
+  or count on new activity, also when Teams shows no toast, as for a
   message in the chat already open. When the red pixels of the taskbar
   grow, a "Red badge on the taskbar icon" notification is sent, then none
-  for 30 seconds. The badge going away, presence changes, the mouse over
-  an icon and icons moving along the taskbar send nothing. These colours
-  do not depend on the theme. `badge` sets another region, `badge none`
-  turns this off.
+  for 30 seconds. Its summary names the app when the icon next to the
+  badge looks like Microsoft Teams, Outlook, Slack, WhatsApp, Signal or
+  Telegram, "VM" otherwise. The badge going away, presence changes, the
+  mouse over an icon and icons moving along the taskbar send nothing.
+  These colours do not depend on the theme. `badge` sets another region,
+  `badge none` turns this off.
 
 Nothing has to be set for the regions: at start, vmnotify finds the
 taskbar at the bottom of the screen, by its top edge, and puts the toast

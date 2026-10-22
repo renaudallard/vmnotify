@@ -91,6 +91,9 @@
 #define TASKMIN		24	/* rows the taskbar top is looked for from */
 #define TASKMAX		160	/* and up to */
 #define EDGE		6	/* colour step of the taskbar top */
+#define ICON		16	/* side of the icons compared */
+#define ICONMATCH	55	/* colour distance of an icon still matching */
+#define SLACK		3	/* pixels an icon is looked for off its place */
 #define DBUSMAX		65536	/* largest D-Bus message part accepted */
 #define DBUSREPLIES	32	/* messages read waiting for a D-Bus reply */
 #define GAP		24	/* blank rows between parts of one toast */
@@ -2113,27 +2116,358 @@ unite(int a[4], const int b[4])
  * presence, and red too for busy. Other icons may be red as well, only
  * a growing count tells of a badge turning red; icons moving along the
  * taskbar keep it.
+ *
+ * was holds a byte per pixel of r, set for those red at the last count.
+ * Put in nx the mean x of the pixels turning red, -1 if none did.
  */
 static int
-reds(const struct vnc *v, const struct region *r)
+reds(const struct vnc *v, const struct region *r, uint8_t *was, int *nx)
 {
 	const uint8_t *p;
-	int i, j, x, y, x0, y0, n = 0;
+	long long sx = 0;
+	int i, j, x, y, x0, y0, n = 0, nn = 0, red;
 
 	origin(v, r, &x0, &y0);
 	for (j = 0; j < r->h; j++) {
-		for (i = 0; i < r->w; i++) {
+		for (i = 0; i < r->w; i++, was++) {
 			x = x0 + i;
 			y = y0 + j;
-			if (x < 0 || y < 0 || x >= v->w || y >= v->h)
-				continue;
-			p = v->fb + ((size_t)y * v->w + x) * 4;
-			if (p[2] >= REDMIN && p[2] >= p[1] + REDOVERG &&
-			    p[2] >= p[0] + REDOVERB)
-				n++;
+			red = 0;
+			if (x >= 0 && y >= 0 && x < v->w && y < v->h) {
+				p = v->fb + ((size_t)y * v->w + x) * 4;
+				red = p[2] >= REDMIN &&
+				    p[2] >= p[1] + REDOVERG &&
+				    p[2] >= p[0] + REDOVERB;
+			}
+			if (red && !*was) {
+				sx += x;
+				nn++;
+			}
+			n += red;
+			*was = red;
 		}
 	}
+	*nx = nn > 0 ? (int)(sx / nn) : -1;
 	return n;
+}
+
+/*
+ * Icons of apps putting a badge on their taskbar icon, 16 by 16 pixels
+ * of four hex digits: red, green, blue and opacity. Made from the
+ * Wikimedia Commons files named, public domain or free, drawn at 24 by
+ * 24 pixels as Windows does at 100% display scaling, then shrunk. The
+ * logos are trademarks of their owners, used only to name the app.
+ */
+static const struct {
+	const char	*name;
+	const char	*px;
+} icons[] = {
+	/* Microsoft Office Teams (2025-present).svg */
+	{ "Microsoft Teams",
+	    "00000000000000009af39afda9fea9f600000000000000000000000000000000"
+	    "0000000000008af39bfe9aff99ffa9fea8f50000000089f188f488e100000000"
+	    "0000000000008af79bff89ff98ff99ff98fc000078f189fd99ff98fd87e10000"
+	    "00000000000089e589ff88ff88ff88ff87e8000079e889ff78ff87ff87e90000"
+	    "000000000000000066da76ef76ff76ec0000000077e878ff66ef77ff76e90000"
+	    "00000000000000008bf267d466d488e299f1000066d165ea55ed65ea66d10000"
+	    "000000008ae18bfc8bff8aff8aff9aff99fe99f533c100000000000000000000"
+	    "000079f18bfd8bff7aff7aff8aff89ff99ff99ff43ce54de65ee76fd87f897f1"
+	    "78f578fe67ef66ef56df66df78ef89ff89ff89ff55cf54cf65df76ef97ff97f6"
+	    "67ef67ef9aef9aef99ef55cf54cf79ff89ff89ff55cf54cf65df76ef87ff87f7"
+	    "57ef57df77dfddef67cf44bf33bf78ff78ff78ff55cf54cf65df76ef86ff87f8"
+	    "56df56df34cfccef33bf33bf32af78ef78ff78ff54cf44cf65df65ef76ef76e8"
+	    "45cf45cf34bfccef33bf33af32af78ef78ff78ff54cf43cf54df65ef76ef76e8"
+	    "44cf44bf33bf77cf32af32af329f77ef77ff77ff54cf43bf54df65df65ef76e7"
+	    "44c543be33ae33bf32af32af55cf77ff67ff67ff55de43bf54cf55df65ef65e6"
+	    "000043b132a166e466fb66ee66ef66ef66ef65ef65ef44cf44cf54de65e865d1"
+	},
+	/* Microsoft Office Teams (2018-present).svg */
+	{ "Microsoft Teams",
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "000000000000000000000000000078e978ef78ee78e877e10000000000000000"
+	    "00000000000000000000000078e588ef78ef78ef88ff78e4000055c855cb55c2"
+	    "000056c156b156b155b156b177d778ef78df78ef88ff78e555c755cf55cf55ca"
+	    "56bc56be56bf56bf56bf55be55be55bf55af78ef78ef77d155c656cf55cf55ca"
+	    "56cf56bf66cf67cf67cf67cf55bf55bf55aa78e778d20000000055c655c855c2"
+	    "55bf55bf9adfeeefffffccef45bf45bf55ac78eb78ec78ec67dc55cb55cb55ca"
+	    "55bf55bf55bf77cfddef45bf45bf45bf55af78ef78ef78ef78ef55cf55cf55cf"
+	    "55bf55bf55bf77cfddef45bf45bf45bf459f78ef78ef78ef77ef55cf55cf55cf"
+	    "55bf55bf55bf77cfdeef44bf44bf44bf459f78ef78ef78ef77ef55cf55cf55cf"
+	    "45bf45bf45bf55bf67cf44bf44af44af459f78ef78ef78ef77ef55cf55cf55cf"
+	    "45bd45be45be44be44af44af44af34af459f78ef78ef78ef77ef55cf55cf55cd"
+	    "000045b144b145a14492448f448f448f55af78ef78ef78ef77ef56df56df55c6"
+	    "0000000000000000000077da78df77df77df78ef78ef78ee67d455c455c30000"
+	    "0000000000000000000077d178ec88ef78ef78ef88ef78e50000000000000000"
+	    "000000000000000000000000000078e578e778e678e200000000000000000000"
+	},
+	/* Microsoft Outlook Icon (2025-present).svg */
+	{ "Outlook",
+	    "00000000000000000000000000008cf99bffabfb87e100000000000000000000"
+	    "000000000000000000005cf56cfc7cff8bffabff89fe78f70000000000000000"
+	    "0000000000003cf13dfb4dff5cff6cff8cff8bff68ef78ff88fd66e200000000"
+	    "00002ae13bf63cfd3cff4cff5cff6cff59ef48ef58ef68ef78ff55de43c743c1"
+	    "000029f92bff3bff3cff3cff4cff28df27ef38ef48ef48ef57ef33cf43cf43cc"
+	    "000029ed29ef2aff3bff29ef17df17df27df28ef37df25cf24cf34cf34cf43cf"
+	    "00005cfd28ef28ef15cf16df16df17df17ef16cf24bf25cf25cf34cf33cf68ef"
+	    "2af44bfe3aef17df27df27df26df16cf15bf24bf24bf25cf25cf36df59ef8bff"
+	    "29ff18ef07ef28df06df16cf27cf24af24bf24bf24bf25bf29ef4aff5aff7bff"
+	    "18ef28efceff9cefdeff37cf26cf14af14af14af17cf1aef1aff3aff4aff7bff"
+	    "17df7aefacef05cf8aef8adf15bf4bef15af18ef1aff1aff1aff2aff3aff6bff"
+	    "16df59dfdeff37dfcdef68cf14bf4cff4dff3bff19ef19ff1aff1aff3aff6bff"
+	    "16cf15cf8adfeeff9adf14bf14af4cff4cff4dff4dff19ef19ff1aff2aff5bff"
+	    "16ca15ce15bf15bf14bf14bf27cf3cff3cff4cff4cff2bff19ef1aff1aff5bfe"
+	    "00005cf64dff3bff3bff3cff3cff3cff3cff3cff4dff2aff19ff1aff1bff4bf8"
+	    "000000004df43cf73cf73cf73cf73cf73cf73cf73bf719e719f71af71bf53af1"
+	},
+	/* Microsoft Outlook logo (2024-2025).svg */
+	{ "Outlook",
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "00000000000000000000000000002ae32aed2aee2ae500000000000000000000"
+	    "000000000000000000002ad32ae92aee2aef2aef2adf18cb07c506b100000000"
+	    "169117dc17cd17cd18dd28df18df18df2aef18cf06bf07cf07df07cb04710000"
+	    "16a217df17df49df6aef38df17df17cf07bf07cf07df07cf06bf05af049d0491"
+	    "159217df38dfcdef59dfcdef17cf17cf07cf07df07cf049f049f049f049f16b2"
+	    "05a217cfacef6adf16cf8bef49df17cf06bf05af049f049f049f15af29df2be2"
+	    "05a216cf6adf9bef06cfbcef27cf16bf038f049f049f049f28cf3bef2bef2ae2"
+	    "05a216ce16cf7adf8bef59df06cf16cf049f05af28bf3bef3cef3bef3bef2ae2"
+	    "15a216df16df06cf05cf16cf16cf16cf2adf4dff4dff4cef3cef3bef3bef2ae2"
+	    "000015b305b417ca18cf18cf18cf3bef5dff4dff4def4cef3cef3bef3bef2ae2"
+	    "00000000000018d619ef18df29df5dff5dff5dff4dff4cff4cef3cff3bed0000"
+	    "00000000000018d119d618d718d74ce74df74df74df74ce74ce73ce73be20000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	},
+	/* Microsoft Office Outlook (2018-2024).svg */
+	{ "Outlook",
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "000000000000000006b406bf06bf06bf06bf06bf06bf06bf06bf06bf06bf06b6"
+	    "000000000000000006b506bf06bf06bf06bf06bf06bf06bf06bf06bf06bf05b6"
+	    "000018d117d117c107c507cf07cf07cf18df29df29df2aef4cef4cef4cef4ce6"
+	    "18dc18de18df18de18df17cf17cf17cf17af2aef2aef2aef5dff5dff5dff5df6"
+	    "18df18df17df39df5adf28df17df17df17af2adf2aef3aef5dff5dff5dff5df6"
+	    "18df17df6adfdeffacefceff07cf17df159f18cf18df18df3bef3bef3bef3ae6"
+	    "18df28dfffff49df17cf9cef6adf17cf059f07cf07cf07df2aef2aef2aef29d7"
+	    "17df28dfffff28df17cf8bef7bef16cf059f07cf07cf07df2aef2aef2aef169f"
+	    "17df17cf9cefacef6adfbdef27cf16cf059f06bf07cf07cf19df28cf28cf18df"
+	    "17cf17cf06cf49df7adf27cf16cf16cf048f06bf06bf05af06bf18cf19df18df"
+	    "17dd17ce17ce16cf06cf16cf16cf16cf169f17bf06af17cf18df19df18df18df"
+	    "000017d116c11694169f168f168f168f27af2aef2aef18cf18df19df18df18df"
+	    "00000000000029d32aef29df29df29df2adf2aef2aef2aef29df18cf18df18df"
+	    "0000000000002ae33bff2aef2aef2aef2aef2aef2aef2aef2aef2aef29cf18cf"
+	    "0000000000002ae12ae72ae72ae72ae72ae72ae72ae72ae72ae72ae72ae729d7"
+	},
+	/* Slack icon 2019.svg */
+	{ "Slack",
+	    "000000000000000000003cea3cfc3be200003b783b7d3b740000000000000000"
+	    "00000000000000003ce73cff3cef3cf93a633b8f3b7f3b8b0000000000000000"
+	    "00000000000000003ce63cff3cef3cfa3a643b8f3b7f3b8c0000000000000000"
+	    "000000000000000000003ce63ce83cf63a653b8f3b7f3b8c0000000000000000"
+	    "00003ce73ce93ce93ce93ce93cf73bc13b763b8f3b7f3b8c00003b743b893b72"
+	    "3cea3cff3cff3cff3cff3cff3cff3cf83b753b8f3b7f3b8c00003b8e3b8f3b8c"
+	    "3cec3cef3cef3cef3cef3cef3cef3cf93a633b8f3b7f3b8b3a713b7f3b7f3b8e"
+	    "3ce23cf93dfa3cfa3cfa3cfa3df93be300003b872c893b744b712b8a2b8a3b85"
+	    "0000f033f035f0320000f032f03400000000fb22fa25ea36ea35fa25fb24fa21"
+	    "d258e26fe26fe268d254e26ee26fe267ed22eb3eeb3feb3feb3feb3feb3feb3c"
+	    "d25dd25fd25fd258d259e25fd25fe26aed24eb3fea3fea3fea3fea3fea3feb3e"
+	    "d253e26be26bd253d259e25fd25fe26a0000eb39fb3ceb3ceb3ceb3cfb3ceb37"
+	    "0000000000000000d259e25fd25fe26aee11ea32fb3100000000000000000000"
+	    "0000000000000000d259e25fd25fe26aec24eb3feb3feb380000000000000000"
+	    "0000000000000000d259e25fd25fe26aec24eb3fea3feb3c0000000000000000"
+	    "0000000000000000d252e25ce26dd255ed21eb3beb3eeb370000000000000000"
+	},
+	/* WhatsApp.svg */
+	{ "WhatsApp",
+	    "0000000000000000000000000000000000000000000000000000000000000000"
+	    "00000000000000000000eee4eee8efeaefeaeee9eee6ccc20000000000000000"
+	    "000000000000ccc1eeebffffdfdfaeaf9dafcecffffffffdbbb3000000000000"
+	    "00000000ccc1fffbcecf7d7f5c6f5c5f5c5f5c6f6c6fbebffffeddd500000000"
+	    "00000000eeebcecf4c5f5c5f4c5f5c6f5c5f5c5f5c6f4c5faebfeeed55510000"
+	    "0000eee4ffff7d7f5c5fdedfaebf4c5f4c5f4c5f4c5f4c5f4c5fdedfddd70000"
+	    "0000eee8efef4c5f6c7fffffffff5c6f4c5f4c5f4c5f4c5f4c5fadaffefd8981"
+	    "0000efe9bebf3b4f4b5fdfefbebf4b5f4b5f4b5f4b5f4b5f4c5f8d8fffffbbb2"
+	    "0000eeeaaebf3b4f3b4f8d9fffff6c6f3b4f3b5f3b4f3b4f3b5f7d8fffffbbb2"
+	    "0000eee8dfef3b4f3b4f3b4f9dafdedf9d9fcecfdedf7c8f3b4f9dafeeed9991"
+	    "0000ded4ffff5c6f3b4f3b4f2b3f6c7fefefffffffff7c8f2b3fdedfcdd80000"
+	    "0000bbb1fffe8d9f2b4f2b4f3b4f2b4f3b4f5b6f4b6f2b4fadafeeedaaa10000"
+	    "0000ddd3ffff4b5f4b5f3b4f1a3f2a3f2b3f2a3f2a3fadbfffffccc500000000"
+	    "0000eee6ffffdedffffeeeeebdbf9daf9d9fadbfdeefeeecccc5000000000000"
+	    "0000eee8dddaccc57872bbb4ddd9eeeceeedeeeabcc588810000000000000000"
+	    "0000000000000000000000000000676178710000000000000000000000000000"
+	},
+	/* Signal-Logo.svg */
+	{ "Signal",
+	    "37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef"
+	    "37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef47ef37ef37ef37ef37ef37ef"
+	    "37ef37ef37ef37ef47ef37ef47ef69ef7aef47ef36ef37ef37ef37ef37ef37ef"
+	    "37ef37ef37ef37ef58ef79ef9bff9aefabff8aef9aef58ef37ef37ef37ef37ef"
+	    "37ef37ef47ef58efddff8aefffffffffffffffffacff9bff69ef37ef37ef37ef"
+	    "37ef37ef37ef79ef8aefeeffffffffffffffffffffffbcff7aef58ef47ef37ef"
+	    "37ef37ef47ef9bffffffffffffffffffffffffffffffffff7aef7aef37ef37ef"
+	    "37ef37ef69ef9bffffffffffffffffffffffffffffffffffabff79ef37ef37ef"
+	    "37ef37ef7aefabffffffffffffffffffffffffffffffffffacff8aef36ef37ef"
+	    "37ef37ef47ef8aefffffffffffffffffffffffffffffffff8aef69ef37ef37ef"
+	    "37ef47ef26ef9bffbcffffffffffffffffffffffffffddff7aef69ef47ef37ef"
+	    "37ef37ef37ef79efdeffdeffffffffffffffffffcdff9bff79ef37ef37ef37ef"
+	    "37ef37ef47ef9bff69ef8aef79efabffacff8aef7aef79ef36ef47ef37ef37ef"
+	    "37ef37ef47ef8aef58ef58ef7aef79ef8aef69ef69ef37ef47ef37ef37ef37ef"
+	    "37ef37ef37ef37ef37ef47ef37ef37ef36ef37ef47ef37ef37ef37ef37ef37ef"
+	    "37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef37ef"
+	},
+	/* Telegram logo.svg */
+	{ "Telegram",
+	    "000000000000000000003ad53aeb3ade3adf3add3be83be10000000000000000"
+	    "0000000000003ad53bec3aef3adf3adf3adf3adf3bef3bee3ae83ad100000000"
+	    "000000003ad73aef3adf3adf3adf3adf3adf3adf3adf3adf3adf3beb00000000"
+	    "00003ad53aef3adf3adf3adf3adf3adf3adf3adf3adf3adf3adf3adf3ada3ad1"
+	    "00003aec3adf3adf3adf3adf3adf3adf3adf3adf29df4adf3adf3adf3bef3ad5"
+	    "3ad53adf3adf3adf3adf3adf2adf3adf5bdf9cefceffdeff3adf3adf3adf3ada"
+	    "3adc3adf3adf3adf29df2adf7befdeffffffeeefefffceff29df3adf3adf3add"
+	    "3ade3adf3adf5adfadefdeffffffeeffddefefffffffadef29df3adf3adf3adf"
+	    "29df29df29df4adf8cefdeffddefcdefffffffffffff8cef29df29df29df29df"
+	    "29dd29df29df29df29df4adfcdefeeefffffffffffff5bdf39df29df29df29de"
+	    "29d829df29df29df29df29dfacdf9cdfbdefffffffff3adf29df29df29df2adb"
+	    "29d129de29df29df29df29df5adf4adf29df7befadef29df29df29df2adf29d7"
+	    "000029d829df29df29df29df29df29df29df29df19cf29df29df29df29de2ad1"
+	    "000029c129db29df29df29df29cf29cf29cf29df29df29df29df29dd29c30000"
+	    "00000000000029da29df29cf29cf29cf29cf29cf29cf29df29de29c300000000"
+	    "00000000000029c129d529da29dd29cf29cf29de29db29d729c1000000000000"
+	},
+};
+
+/* The integer square root of n, for logging. */
+static int
+root(int n)
+{
+	int r = 0;
+
+	while ((r + 1) * (r + 1) <= n)
+		r++;
+	return r;
+}
+
+static int
+hex(char c)
+{
+	return c <= '9' ? c - '0' : c - 'a' + 10;
+}
+
+/* The median of n values, which are sorted. */
+static int
+median(int *a, int n)
+{
+	int i, j, t;
+
+	for (i = 1; i < n; i++)
+		for (j = i; j > 0 && a[j - 1] > a[j]; j--) {
+			t = a[j];
+			a[j] = a[j - 1];
+			a[j - 1] = t;
+		}
+	return a[n / 2];
+}
+
+/* Shrink the s by s pixels at x, y to ICON by ICON, averaging. */
+static void
+shrink(const struct vnc *v, int x, int y, int s, int img[ICON][ICON][3])
+{
+	const uint8_t *p;
+	int i, j, k, n, c, i0, i1, j0, j1, sum;
+
+	for (j = 0; j < ICON; j++) {
+		j0 = j * s / ICON;
+		j1 = (j + 1) * s / ICON;
+		for (i = 0; i < ICON; i++) {
+			i0 = i * s / ICON;
+			i1 = (i + 1) * s / ICON;
+			for (c = 0; c < 3; c++) {
+				sum = 0;
+				for (k = j0; k < j1; k++) {
+					p = v->fb + ((size_t)(y + k) * v->w +
+					    x + i0) * 4;
+					for (n = i0; n < i1; n++, p += 4)
+						sum += p[2 - c];
+				}
+				img[j][i][c] = sum / ((j1 - j0) * (i1 - i0));
+			}
+		}
+	}
+}
+
+/*
+ * Return the mean of the squared colour differences between img and
+ * icon k drawn on bg, leaving out the top right corner a badge covers.
+ */
+static int
+distance(int img[ICON][ICON][3], int k, const int bg[3])
+{
+	const char *q = icons[k].px;
+	int i, j, c, a, d, n = 0, sum = 0;
+
+	for (j = 0; j < ICON; j++) {
+		for (i = 0; i < ICON; i++, q += 4) {
+			if (i >= ICON * 14 / 24 && j < ICON * 10 / 24)
+				continue;
+			a = hex(q[3]);
+			for (c = 0; c < 3; c++) {
+				d = (17 * hex(q[c]) * a + bg[c] * (15 - a)) /
+				    15 - img[j][i][c];
+				sum += d * d;
+			}
+			n++;
+		}
+	}
+	return sum / (3 * n);
+}
+
+/*
+ * Name the app whose taskbar icon got a badge around x. Windows draws
+ * the badge over the top right corner of the icon, a square 24 pixels
+ * wide at 100% display scaling, in the middle of the taskbar r. The
+ * icon is shrunk to ICON pixels and compared with the known ones drawn
+ * on the taskbar colour, taken left of it. It is looked for up to SLACK
+ * pixels off, the taskbar top may be a row off and the icon not quite
+ * in the middle. Return NULL when none is close enough.
+ */
+static const char *
+appname(const struct vnc *v, const struct region *r, int x)
+{
+	const uint8_t *p;
+	int img[ICON][ICON][3], col[3][ICON * 4], bg[3];
+	int s, x0, y0, rx, ry, dx, dy, j, k, c, d, found = -1, best = -1;
+
+	origin(v, r, &rx, &ry);
+	s = (24 * r->h + 24) / 48;
+	x0 = x - (41 * s + 24) / 48;
+	y0 = ry + (r->h - s) / 2;
+	if (s < ICON || s > 4 * ICON || x0 < SLACK + 4 || y0 < SLACK ||
+	    x0 + s + SLACK > v->w || y0 + s + SLACK > v->h)
+		return NULL;
+
+	for (j = 0; j < s; j++) {
+		p = v->fb + ((size_t)(y0 + j) * v->w + x0 - SLACK - 3) * 4;
+		for (c = 0; c < 3; c++)
+			col[c][j] = p[2 - c];
+	}
+	for (c = 0; c < 3; c++)
+		bg[c] = median(col[c], s);
+
+	for (dy = -SLACK; dy <= SLACK; dy++) {
+		for (dx = -SLACK; dx <= SLACK; dx++) {
+			shrink(v, x0 + dx, y0 + dy, s, img);
+			for (k = 0; k < (int)(sizeof(icons) /
+			    sizeof(icons[0])); k++) {
+				d = distance(img, k, bg);
+				if (best < 0 || d < best) {
+					best = d;
+					found = k;
+				}
+			}
+		}
+	}
+	debug("taskbar icon %d,%d %dx%d: closest %s at %d", x0, y0, s, s,
+	    icons[found].name, root(best));
+	return best <= ICONMATCH * ICONMATCH ? icons[found].name : NULL;
 }
 
 /*
@@ -2207,14 +2541,15 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 {
 	struct pollfd pfd;
 	struct region tr, bar = { 0, 0, 0, 0 };
-	uint8_t *cur, *prev, *seen, *base, *tmp;
+	uint8_t *cur, *prev, *seen, *base, *tmp, *wasred = NULL;
+	const char *app;
 	size_t len;
 	char *lasttext = NULL;
 	long long t, changed = 0, nextreq = 0, quiet = 0;
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
-	int span = 0, wider = 0, n, red = 0, findtoast, findbadge;
+	int span = 0, wider = 0, n, nx, red = 0, findtoast, findbadge;
 	int part[4], all[4], last[4];
 
 	pfd.fd = v->fd;
@@ -2244,6 +2579,9 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
 	    (seen = malloc(len)) == NULL || (base = malloc(len)) == NULL)
 		fatal("malloc");
+	if (badge != NULL && (wasred = calloc((size_t)bar.w * bar.h,
+	    1)) == NULL)
+		fatal("calloc");
 
 	for (;;) {
 		/*
@@ -2281,8 +2619,13 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			filling = 1;
 			fills = 0;
 			/* the taskbar is as wide as the screen */
-			if (findbadge)
+			if (findbadge && bar.w != v->w) {
 				bar.w = v->w;
+				free(wasred);
+				if ((wasred = calloc((size_t)bar.w * bar.h,
+				    1)) == NULL)
+					fatal("calloc");
+			}
 		}
 		if (filling) {
 			area(v, toast, badge, box);
@@ -2321,7 +2664,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			 * icon do not. A red badge at start is not reported.
 			 */
 			if (badge != NULL) {
-				n = reds(v, badge);
+				n = reds(v, badge, wasred, &nx);
 				if (n != red)
 					debug("taskbar: %d red pixels", n);
 				if (!fresh && n >= red + REDBADGE) {
@@ -2329,9 +2672,11 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 						debug("taskbar icon turned red "
 						    "during the cooldown");
 					else {
-						show("taskbar icon",
-						    "red badge");
-						notify("VM", "Red badge on the "
+						if ((app = appname(v, badge,
+						    nx)) == NULL)
+							app = "VM";
+						show("red badge", app);
+						notify(app, "Red badge on the "
 						    "taskbar icon");
 						quiet = t + cooldown * 1000LL;
 					}
