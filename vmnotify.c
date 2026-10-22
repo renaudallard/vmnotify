@@ -1983,9 +1983,12 @@ helper_loop(int fd)
 	}
 }
 
-/* Fork the helper, the watcher keeps its end of the socket pair. */
+/*
+ * Fork the helper, the watcher keeps its end of the socket pair. The
+ * helper has no use for the VNC password, it wipes it.
+ */
 static void
-helper_start(int vncfd, const char *where)
+helper_start(int vncfd, const char *where, char *password)
 {
 	pid_t pid;
 	int sv[2];
@@ -1997,6 +2000,8 @@ helper_start(int vncfd, const char *where)
 	if (pid == 0) {
 		close(sv[0]);
 		close(vncfd);
+		if (password != NULL)
+			explicit_bzero(password, strlen(password));
 		setproctitle("vmnotify: helper %s", where);
 		helper_loop(sv[1]);
 	}
@@ -3670,7 +3675,7 @@ main(int argc, char *argv[])
 
 	/* all the server sends is read under seccomp, the helper does more */
 	vnc_connect(&v, host, port);
-	helper_start(v.fd, where);
+	helper_start(v.fd, where, opt[K_PASSWORD]);
 	sandbox();
 	vnc_handshake(&v, opt[K_PASSWORD]);
 	if (opt[K_PASSWORD] != NULL)
