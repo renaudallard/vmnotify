@@ -1910,6 +1910,15 @@ toast_seen(char *text, const regex_t *re, char **last)
 	size_t len;
 
 	show("toast area", text);
+
+	/*
+	 * The same toast, or what is left of a stack of them. A read may
+	 * miss lines, the header that matches included, keep the text sent.
+	 */
+	if (*last != NULL && find(*last, text, &end) != NULL) {
+		free(text);
+		return 1;
+	}
 	if (*text == '\0' || regexec(re, text, 0, NULL, 0) != 0) {
 		free(*last);
 		*last = NULL;
@@ -1918,12 +1927,6 @@ toast_seen(char *text, const regex_t *re, char **last)
 	}
 	old = *last;
 	*last = text;
-
-	/* the same toast, or what is left of a stack of them */
-	if (old != NULL && find(old, text, &end) != NULL) {
-		free(old);
-		return 1;
-	}
 
 	/*
 	 * A toast stacked with the ones sent before, or taking the place of
