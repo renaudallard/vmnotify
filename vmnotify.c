@@ -2022,9 +2022,11 @@ helper_start(int vncfd, const char *where)
 #define SC_FILTER	2	/* SECCOMP_MODE_FILTER */
 #define SC_NR		0	/* offsetof(struct seccomp_data, nr) */
 #define SC_ARCH		4	/* offsetof(struct seccomp_data, arch) */
+#define SC_ARG0		16	/* low half of args[0] */
 #define SC_ARG2		32	/* low half of args[2] */
 #define SC_ARG5		56	/* low half of args[5] */
 #define SC_X32		0x40000000U
+#define SC_PID		0xffffffffU	/* the pid, set by sandbox() */
 #if defined(__x86_64__)
 #define SC_AUDIT_ARCH	0xc000003eU
 #elif defined(__aarch64__)
@@ -2050,6 +2052,11 @@ struct bpfprog {
 	{ BPF_JEQ_K, 0, 4, (nr) }, { BPF_LD_W_ABS, 0, 0, SC_ARG5 }, \
 	{ BPF_JEQ_K, 0, 1, 0 }, { BPF_RET_K, 0, 0, SC_ALLOW }, \
 	{ BPF_RET_K, 0, 0, SC_KILL }
+/* signals only to itself, as abort(3) does */
+#define SC_SELF(nr) \
+	{ BPF_JEQ_K, 0, 4, (nr) }, { BPF_LD_W_ABS, 0, 0, SC_ARG0 }, \
+	{ BPF_JEQ_K, 0, 1, SC_PID }, { BPF_RET_K, 0, 0, SC_ALLOW }, \
+	{ BPF_RET_K, 0, 0, SC_KILL }
 /* memory is never made executable */
 #define SC_NOEXEC(nr) \
 	{ BPF_JEQ_K, 0, 4, (nr) }, { BPF_LD_W_ABS, 0, 0, SC_ARG2 }, \
@@ -2067,7 +2074,7 @@ struct bpfprog {
 #endif
 #if defined(SC_AUDIT_ARCH) && !defined(NOSECCOMP)
 #define SANDBOX
-static const struct bpf filter[] = {
+static struct bpf filter[] = {
 	{ BPF_LD_W_ABS, 0, 0, SC_ARCH },
 	{ BPF_JEQ_K, 1, 0, SC_AUDIT_ARCH },
 	{ BPF_RET_K, 0, 0, SC_KILL },
@@ -2095,10 +2102,13 @@ static const struct bpf filter[] = {
 	SC(SYS_newfstatat, SC_ALLOW),
 	SC(SYS_lseek, SC_ALLOW),
 	SC(SYS_getpid, SC_ALLOW),
+	SC(SYS_gettid, SC_ALLOW),
 	SC_NOADDR(SYS_sendto),
 	SC(SYS_futex, SC_ALLOW),
 	SC(SYS_getrandom, SC_ALLOW),
 	SC(SYS_rt_sigprocmask, SC_ALLOW),
+	SC_SELF(SYS_tgkill),
+	SC_SELF(SYS_tkill),
 	SC(SYS_rt_sigreturn, SC_ALLOW),
 	SC(SYS_restart_syscall, SC_ALLOW),
 	SC(SYS_exit, SC_ALLOW),
@@ -2123,6 +2133,11 @@ sandbox(void)
 {
 #ifdef SANDBOX
 	struct bpfprog prog = { sizeof(filter) / sizeof(filter[0]), filter };
+	size_t i;
+
+	for (i = 0; i < sizeof(filter) / sizeof(filter[0]); i++)
+		if (filter[i].code == BPF_JEQ_K && filter[i].k == SC_PID)
+			filter[i].k = getpid();
 
 	/* syslog takes the time zone the first time, take it before */
 	tzset();
