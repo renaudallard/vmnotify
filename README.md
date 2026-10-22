@@ -80,8 +80,9 @@ and start it again:
 
 Installing by hand as the README of 0.3.0 and earlier said may have
 left the manual page in a file named `/usr/local/share/man/man1`
-instead of a directory. Installing then fails with "Not a directory" or
-"File exists"; remove that file first:
+instead of a directory. install.sh checks that this file is the vmnotify
+manual page and replaces it with the directory. When installing by hand,
+remove it first:
 
     sudo rm /usr/local/share/man/man1
 

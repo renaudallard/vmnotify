@@ -41,7 +41,20 @@ case $prefix in
 esac
 
 cd "$(dirname "$0")"
-install -d "$prefix/bin" "$prefix/share/man/man1"
+
+# The README of 0.3.0 and earlier installed the manual page as a file
+# named man1 when that directory did not exist, replace it.
+man1=$prefix/share/man/man1
+if [ -f "$man1" ]; then
+	if ! grep -q '^\.Dt VMNOTIFY 1$' "$man1"; then
+		echo "$man1 is a file, not a directory" >&2
+		exit 1
+	fi
+	rm "$man1"
+	echo "removed $man1, the vmnotify manual page installed as a file"
+fi
+
+install -d "$prefix/bin" "$man1"
 install -m 755 vmnotify "$prefix/bin/vmnotify"
 install -m 644 vmnotify.1 "$prefix/share/man/man1/vmnotify.1"
 echo "installed $prefix/bin/vmnotify and $prefix/share/man/man1/vmnotify.1"
