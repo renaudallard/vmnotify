@@ -416,5 +416,7 @@ A helper process, forked before the filter is set and shown as
 .Dq vmnotify: helper ,
 does both for the watcher, over a socket pair, and checks what it is
 asked.
-The filter is not used in builds with AddressSanitizer, nor on other
-architectures than amd64 and arm64.
+The filter is not used in builds with sanitizers, which make system calls
+of their own, nor on other architectures than amd64 and arm64.
+Builds with gcc before 14 and UndefinedBehaviorSanitizer alone need
+.Fl DNOSECCOMP .

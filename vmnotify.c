@@ -2074,12 +2074,18 @@ struct bpfprog {
 	{ BPF_JSET_K, 1, 0, PROT_EXEC }, { BPF_RET_K, 0, 0, SC_ALLOW }, \
 	{ BPF_RET_K, 0, 0, SC_KILL }
 
-/* sanitizers make system calls of their own, gcc and clang tell apart */
+/*
+ * Sanitizers make system calls of their own when reporting. clang and
+ * gcc 14 or later tell of them with __has_feature; older gcc only tells
+ * of AddressSanitizer, UndefinedBehaviorSanitizer alone then needs
+ * -DNOSECCOMP.
+ */
 #if defined(__SANITIZE_ADDRESS__) && !defined(NOSECCOMP)
 #define NOSECCOMP
 #endif
 #ifdef __has_feature
-#if __has_feature(address_sanitizer) && !defined(NOSECCOMP)
+#if (__has_feature(address_sanitizer) || \
+    __has_feature(undefined_behavior_sanitizer)) && !defined(NOSECCOMP)
 #define NOSECCOMP
 #endif
 #endif
