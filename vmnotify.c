@@ -94,6 +94,7 @@
 #define FLATMIN		16	/* a flat badge pixel: colour this far from grey */
 #define FLATSIDE	16	/* badge width at 100% scaling */
 #define BADGE		40	/* pixels a badge adds, about 100 red, 70 flat */
+#define TOLD		8	/* badges remembered for their cooldown */
 #define TASKBAR		48	/* rows of the taskbar at 100% scaling */
 #define TASKMIN		24	/* rows the taskbar top is looked for from */
 #define TASKMAX		160	/* and up to */
@@ -113,6 +114,12 @@ extern char **environ;
 
 struct region {
 	int	x, y, w, h;
+};
+
+/* A badge told of, where it was and when its cooldown ends. */
+struct told {
+	int		 x, y;
+	long long	 until;
 };
 
 struct vnc {
@@ -278,8 +285,8 @@ help(void)
 	    "  -b x,y,w,h  watch these taskbar icons for badges, none for "
 	    "none\n"
 	    "              (the taskbar)\n"
-	    "  -c sec      send no other badge notification for sec after "
-	    "one\n"
+	    "  -c sec      send no other badge notification for an icon for "
+	    "sec after one\n"
 	    "              (30, at most 86400)\n"
 	    "  -d          run in the background and restart after errors\n"
 	    "  -h          show this help\n"
@@ -3136,6 +3143,31 @@ notify_badge(const struct vnc *v, const struct region *r, int red, int x,
 }
 
 /*
+ * Return 1 if a badge at x, y is in the cooldown of one told of near it,
+ * within half the thickness of the taskbar r, else remember it as told
+ * of, until then, in place of the one whose cooldown ends first.
+ */
+static int
+cooling(struct told told[TOLD], const struct region *r, int x, int y,
+    long long t, long long until)
+{
+	int i, j = 0, near;
+
+	near = (r->w < r->h ? r->w : r->h) / 2;
+	for (i = 0; i < TOLD; i++) {
+		if (t < told[i].until && abs(x - told[i].x) < near &&
+		    abs(y - told[i].y) < near)
+			return 1;
+		if (told[i].until < told[j].until)
+			j = i;
+	}
+	told[j].x = x;
+	told[j].y = y;
+	told[j].until = until;
+	return 0;
+}
+
+/*
  * Return the height of the taskbar at the bottom of the screen: the first
  * row from the bottom, between TASKMIN and TASKMAX, under which most
  * pixels change colour. That is its top border, or the edge to what is
@@ -3209,7 +3241,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	uint8_t *cur, *prev, *seen, *base, *tmp, *was = NULL;
 	size_t len;
 	char *lasttext = NULL;
-	long long t, changed = 0, nextreq = 0, quiet = 0, nextkey = 0;
+	struct told told[TOLD];
+	long long t, changed = 0, nextreq = 0, nextkey = 0;
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
@@ -3220,6 +3253,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
 	srandom((unsigned int)now() ^ (unsigned int)getpid());
+	memset(told, 0, sizeof(told));
 
 	/*
 	 * Regions 0 wide are found along the taskbar, on the whole screen
@@ -3348,16 +3382,13 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 					if (n[k] >= had[k] + BADGE &&
 					    nx[k] >= 0)
 						break;
-				if (!fresh && k < 2) {
-					if (t < quiet)
-						debug("taskbar badge during "
-						    "the cooldown");
-					else {
-						notify_badge(v, badge, k == 0,
-						    nx[k], ny[k]);
-						quiet = t + cooldown * 1000LL;
-					}
-				}
+				if (!fresh && k < 2 && cooling(told, badge,
+				    nx[k], ny[k], t, t + cooldown * 1000LL))
+					debug("taskbar badge during its "
+					    "cooldown");
+				else if (!fresh && k < 2)
+					notify_badge(v, badge, k == 0, nx[k],
+					    ny[k]);
 				had[0] = n[0];
 				had[1] = n[1];
 			}

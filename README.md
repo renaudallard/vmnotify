@@ -32,24 +32,23 @@ Two things are watched:
   differences count, never particular colours, so light and dark themes
   work alike, and light text on a dark toast is turned dark on light for
   tesseract.
-- the taskbar, for badges in the corner of app icons. Teams draws its
-  own, green, yellow or grey with your presence and red with a white mark
-  or count on new activity, also when Teams shows no toast, as for a
-  message in the chat already open. These colours do not depend on the
-  theme. Windows draws the badges apps ask it for, such as the envelope
-  Outlook shows for new mail, as a disc filled with the accent colour, a
-  single colour where icons are shaded. When the red pixels of the
-  taskbar grow, a "Red badge on the taskbar icon" notification is sent;
-  when those of single colour areas narrower than a badge do, a "New
-  badge on the taskbar icon" one. Then none for 30 seconds. Its summary
+- the taskbar, for badges in the corner of app icons. Teams draws its own,
+  green, yellow or grey with your presence and red with a white mark or
+  count on new activity, also when Teams shows no toast, as for a message
+  in the chat already open. These colours do not depend on the theme.
+  Windows draws the badges apps ask it for, such as the envelope Outlook
+  shows for new mail, as a disc filled with the accent colour, a single
+  colour where icons are shaded. When the red pixels of the taskbar grow,
+  a "Red badge on the taskbar icon" notification is sent; when those of
+  single colour areas narrower than a badge do, a "New badge on the
+  taskbar icon" one. Then none for that icon for 30 seconds. Its summary
   names the app when the icon next to the badge looks like Microsoft
-  Teams, Outlook, Slack, WhatsApp, Signal or Telegram, "VM" otherwise,
-  and its image shows the taskbar around the icon, badge included, so
-  that any app can be told.
-  Badges going away, presence changes, the mouse over an icon, icons
-  moving along the taskbar and all of it coming back, as after the lock
-  screen or a full screen window, send nothing. `badge` sets another
-  region, `badge none` turns this off.
+  Teams, Outlook, Slack, WhatsApp, Signal or Telegram, "VM" otherwise, and
+  its image shows the taskbar around the icon, badge included, so that any
+  app can be told. Badges going away, presence changes, the mouse over an
+  icon, icons moving along the taskbar and all of it coming back, as after
+  the lock screen or a full screen window, send nothing. `badge` sets
+  another region, `badge none` turns this off.
 
 Every notification summary starts with the name of the machine, the
 desktop name the VNC server gives, so that notifications from several
@@ -183,8 +182,8 @@ remove it first:
 
     -b x,y,w,h  watch these taskbar icons for badges, none for none
                 (default: the taskbar)
-    -c sec      send no other badge notification for sec after one
-                (default: 30, at most 86400)
+    -c sec      send no other badge notification for an icon for sec
+                after one (default: 30, at most 86400)
     -d          run in the background, log to syslog and start again 30
                 seconds after any error, such as the VM being powered off
     -h          show the version and a summary of the options and of
