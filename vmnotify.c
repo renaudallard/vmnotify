@@ -91,9 +91,9 @@
 #define REDMIN		140	/* a red badge pixel: red at least this, */
 #define REDOVERG	110	/* this much more red than green, */
 #define REDOVERB	40	/* this much more red than blue */
-#define FLATMIN		16	/* a flat badge pixel: colour this far from grey */
+#define FLATMIN		16	/* flat badge pixels are this far from grey */
 #define FLATSIDE	16	/* badge width at 100% scaling */
-#define BADGE		40	/* pixels a badge adds, about 100 red, 70 flat */
+#define BADGE		40	/* pixels a badge adds, 100 red or 70 flat */
 #define TOLD		8	/* badges remembered for their cooldown */
 #define TASKBAR		48	/* rows of the taskbar at 100% scaling */
 #define TASKMIN		24	/* rows the taskbar top is looked for from */
