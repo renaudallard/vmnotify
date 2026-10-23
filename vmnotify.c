@@ -1091,6 +1091,7 @@ screenshot(const struct vnc *v, FILE *fp, const char *path)
 {
 	const uint8_t *p;
 	size_t i;
+	int error;
 
 	fprintf(fp, "P6\n%d %d\n255\n", v->w, v->h);
 	for (i = 0, p = v->fb; i < (size_t)v->w * v->h; i++, p += 4) {
@@ -1098,7 +1099,9 @@ screenshot(const struct vnc *v, FILE *fp, const char *path)
 		putc(p[1], fp);
 		putc(p[0], fp);
 	}
-	if (ferror(fp) | fclose(fp))
+	/* fp is gone once closed, ask about errors before */
+	error = ferror(fp);
+	if (fclose(fp) == EOF || error)
 		fatal("%s", path);
 }
 
