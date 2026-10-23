@@ -1452,7 +1452,7 @@ ocr(const uint8_t *img, int stride, const int box[4])
 	return text;
 }
 
-/* Notification bodies may contain markup, escape it. */
+/* Servers taking markup read & < > in bodies as markup, escape them. */
 static char *
 escape(const char *s)
 {
@@ -1705,18 +1705,22 @@ dbus_connect(void)
 
 /*
  * Read one message, return its type and put in reply the serial it
- * answers, 0 if none, and in err the name and text of an error. Return
- * -1 if it cannot be read.
+ * answers, 0 if none, and in err the name and text of an error. Set
+ * found if the body is an array of strings holding find, which may be
+ * NULL. Return -1 if it cannot be read.
  */
 static int
-dbus_read(int fd, uint32_t *reply, char *err, size_t errlen)
+dbus_read(int fd, uint32_t *reply, char *err, size_t errlen,
+    const char *find, int *found)
 {
 	uint8_t h[16], *m;
 	uint32_t blen, flen, n, v;
-	size_t len, off, end, i;
-	int big, type, code, t, sig = 0;
+	size_t len, off, end, aend, i;
+	const char *sig = "";
+	int big, type, code, t;
 
 	*reply = 0;
+	*found = 0;
 	if (readall(fd, h, sizeof(h)) == -1)
 		return -1;
 	if ((h[0] != 'l' && h[0] != 'B') || h[3] != 1) {
@@ -1769,10 +1773,11 @@ dbus_read(int fd, uint32_t *reply, char *err, size_t errlen)
 				snprintf(err, errlen, "%s", m + off);
 			off += n + 1;
 		} else if (t == 'g') {
-			if (off >= end || (size_t)m[off] + 2 > end - off)
+			if (off >= end || (size_t)m[off] + 2 > end - off ||
+			    m[off + 1 + m[off]] != '\0')
 				goto bad;
-			if (code == 8 && m[off] > 0)
-				sig = m[off + 1];
+			if (code == 8)
+				sig = (char *)m + off + 1;
 			off += m[off] + 2;
 		} else
 			goto bad;
@@ -1780,11 +1785,28 @@ dbus_read(int fd, uint32_t *reply, char *err, size_t errlen)
 
 	/* an error body starts with a string telling what went wrong */
 	off = (end + 7) & ~(size_t)7;
-	if (type == 3 && sig == 's' && blen >= 4) {
+	if (type == 3 && sig[0] == 's' && blen >= 4) {
 		n = dget32(m + off, big);
 		if (n < blen - 4 && m[off + 4 + n] == '\0')
 			snprintf(err + strlen(err), errlen - strlen(err),
 			    ": %s", m + off + 4);
+	}
+
+	/* an array of strings: its length in bytes, then each 4 aligned */
+	if (find != NULL && strcmp(sig, "as") == 0 && blen >= 4 &&
+	    (n = dget32(m + off, big)) <= blen - 4) {
+		aend = off + 4 + n;
+		for (i = off + 4; i < aend; i += n + 1) {
+			i = (i + 3) & ~(size_t)3;
+			if (i + 4 > aend)
+				break;
+			n = dget32(m + i, big);
+			i += 4;
+			if (n >= aend - i || m[i + n] != '\0')
+				break;
+			if (strcmp((char *)m + i, find) == 0)
+				*found = 1;
+		}
 	}
 	for (i = 0; err[i] != '\0'; i++)
 		if (!isprint((unsigned char)err[i]))
@@ -1799,6 +1821,31 @@ bad:
 }
 
 /*
+ * Read messages until the reply to serial, skipping the others such as
+ * signals. Return its type, 0 if it did not come, -1 if the bus cannot
+ * be read. Set found as dbus_read() does for that reply.
+ */
+static int
+dbus_wait(int fd, uint32_t serial, char *err, size_t errlen,
+    const char *find, int *found)
+{
+	uint32_t reply;
+	int i, type, f;
+
+	err[0] = '\0';
+	for (i = 0; i < DBUSREPLIES; i++) {
+		if ((type = dbus_read(fd, &reply, err, errlen, find, &f)) == -1)
+			return -1;
+		if (reply == serial && (type == 2 || type == 3)) {
+			if (found != NULL)
+				*found = f;
+			return type;
+		}
+	}
+	return 0;
+}
+
+/*
  * Send a notification. A connection is made for each, they are rare.
  * Failures are only logged, the notification is lost.
  */
@@ -1806,12 +1853,11 @@ static void
 dbus_notify(const char *summary, const char *body)
 {
 	struct buf args = { NULL, 0, 0 }, hello = { NULL, 0, 0 };
-	struct buf call = { NULL, 0, 0 };
+	struct buf caps = { NULL, 0, 0 }, call = { NULL, 0, 0 };
 	struct timeval tv = { TIMEOUT, 0 };
 	char auth[64], line[256], err[256], *e;
 	size_t len = 0;
-	uint32_t reply;
-	int fd, i, n, type = -1;
+	int fd, i, n, type, markup = 0;
 
 	debug("sending a notification, summary \"%s\"", summary);
 	if ((fd = dbus_connect()) == -1)
@@ -1842,41 +1888,54 @@ dbus_notify(const char *summary, const char *body)
 		goto out;
 	}
 
-	e = escape(body);
+	/*
+	 * Only a server listing body-markup in its capabilities takes
+	 * markup, others would show it. One that cannot tell gets plain
+	 * text too, Notify then says what is wrong with it.
+	 */
+	dbus_call(&hello, 1, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+	    "org.freedesktop.DBus", "Hello", NULL, NULL);
+	dbus_call(&caps, 2, "org.freedesktop.Notifications",
+	    "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
+	    "GetCapabilities", NULL, NULL);
+	if (writeall(fd, "BEGIN\r\n", 7) == -1 ||
+	    writeall(fd, hello.p, hello.len) == -1 ||
+	    writeall(fd, caps.p, caps.len) == -1)
+		goto fail;
+	if ((type = dbus_wait(fd, 2, err, sizeof(err), "body-markup",
+	    &markup)) == -1)
+		goto fail;
+	if (type == 0) {
+		log_warnx("no answer to the notification");
+		goto out;
+	}
+	if (type == 3)
+		debug("no capabilities: %s", err);
+
+	e = markup ? escape(body) : NULL;
 	bstr(&args, "vmnotify");
 	bu32(&args, 0);
 	bstr(&args, "");
 	bstr(&args, summary);
-	bstr(&args, e);
+	bstr(&args, e != NULL ? e : body);
 	bu32(&args, 0);		/* no actions */
 	bu32(&args, 0);		/* no hints, padded for the dict entries */
 	balign(&args, 8);
 	bu32(&args, (uint32_t)-1);
 	free(e);
-	dbus_call(&hello, 1, "org.freedesktop.DBus", "/org/freedesktop/DBus",
-	    "org.freedesktop.DBus", "Hello", NULL, NULL);
-	dbus_call(&call, 2, "org.freedesktop.Notifications",
+	dbus_call(&call, 3, "org.freedesktop.Notifications",
 	    "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
 	    "Notify", "susssasa{sv}i", &args);
-	if (writeall(fd, "BEGIN\r\n", 7) == -1 ||
-	    writeall(fd, hello.p, hello.len) == -1 ||
-	    writeall(fd, call.p, call.len) == -1)
+	if (writeall(fd, call.p, call.len) == -1 ||
+	    (type = dbus_wait(fd, 3, err, sizeof(err), NULL, NULL)) == -1)
 		goto fail;
-
-	/* skip the answer to Hello and signals until Notify is answered */
-	err[0] = '\0';
-	for (i = 0; i < DBUSREPLIES; i++) {
-		if ((type = dbus_read(fd, &reply, err, sizeof(err))) == -1)
-			goto fail;
-		if (reply == 2 && (type == 2 || type == 3))
-			break;
-	}
-	if (i == DBUSREPLIES)
+	if (type == 0)
 		log_warnx("no answer to the notification");
 	else if (type == 3)
 		log_warnx("notification refused: %s", err);
 	else
-		debug("notification sent");
+		debug("notification sent, %s", markup ? "markup escaped" :
+		    "no markup");
 	goto out;
 
 fail:
@@ -1887,6 +1946,7 @@ fail:
 out:
 	free(args.p);
 	free(hello.p);
+	free(caps.p);
 	free(call.p);
 	close(fd);
 }
