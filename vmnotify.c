@@ -2473,7 +2473,10 @@ forward(char *text)
 	*body = '\n';
 }
 
-/* Return 1 if text is a toast to forward, sent or already sent. */
+/*
+ * Return 1 if text is a toast to forward, sent or already sent, or if
+ * nothing was read while one sent may still be on screen.
+ */
 static int
 toast_seen(char *text, const regex_t *re, char **last)
 {
@@ -2481,6 +2484,12 @@ toast_seen(char *text, const regex_t *re, char **last)
 	size_t len;
 
 	show("toast area", text);
+
+	/* nothing read, as on a black screen, a toast sent may still be on */
+	if (*text == '\0') {
+		free(text);
+		return *last != NULL;
+	}
 
 	/*
 	 * The same toast, or what is left of a stack of them. A read may
@@ -2490,7 +2499,7 @@ toast_seen(char *text, const regex_t *re, char **last)
 		free(text);
 		return 1;
 	}
-	if (*text == '\0' || regexec(re, text, 0, NULL, 0) != 0) {
+	if (regexec(re, text, 0, NULL, 0) != 0) {
 		free(*last);
 		*last = NULL;
 		free(text);
