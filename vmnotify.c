@@ -2544,7 +2544,9 @@ unite(int a[4], const int b[4])
  *
  * was holds a byte per pixel of r, bit 0 set for those red and bit 1 for
  * those flat at the last count. Put in nx[0] and nx[1] the mean x of the
- * pixels turning red or flat, -1 if none did.
+ * pixels turning red or flat, -1 if none did or if they lie further apart
+ * than the taskbar is thick, as when all of it comes back after the lock
+ * screen or a full screen window.
  */
 static void
 badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
@@ -2552,12 +2554,13 @@ badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
 {
 	const uint8_t *p;
 	long long sx[2] = { 0, 0 };
-	int i, j, k, x, y, x0, y0, d, hi, lo, now, nn[2] = { 0, 0 };
+	int i, j, k, x, y, x0, y0, d, hi, lo, now, side, nn[2] = { 0, 0 };
+	int ext[2][4];
 
 	/* the taskbar is as thick as r is on its shorter side */
 	origin(v, r, &x0, &y0);
-	d = r->w < r->h ? r->w : r->h;
-	d = (FLATSIDE * d + TASKBAR / 2) / TASKBAR;
+	side = r->w < r->h ? r->w : r->h;
+	d = (FLATSIDE * side + TASKBAR / 2) / TASKBAR;
 	n[0] = n[1] = 0;
 	for (j = 0; j < r->h; j++) {
 		for (i = 0; i < r->w; i++, was++) {
@@ -2583,8 +2586,16 @@ badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
 			}
 			for (k = 0; k < 2; k++) {
 				if ((now >> k & 1) && !(*was >> k & 1)) {
+					if (nn[k]++ == 0) {
+						ext[k][0] = ext[k][1] = x;
+						ext[k][2] = y;
+					}
+					if (x < ext[k][0])
+						ext[k][0] = x;
+					if (x > ext[k][1])
+						ext[k][1] = x;
+					ext[k][3] = y;
 					sx[k] += x;
-					nn[k]++;
 				}
 				n[k] += now >> k & 1;
 			}
@@ -2592,7 +2603,9 @@ badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
 		}
 	}
 	for (k = 0; k < 2; k++)
-		nx[k] = nn[k] > 0 ? (int)(sx[k] / nn[k]) : -1;
+		nx[k] = nn[k] == 0 || ext[k][1] - ext[k][0] >= side ||
+		    ext[k][3] - ext[k][2] >= side ? -1 :
+		    (int)(sx[k] / nn[k]);
 }
 
 /*
@@ -3106,8 +3119,9 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			/*
 			 * Only a badge turning red or appearing tells of new
 			 * activity, one turning red is told as such. Badges
-			 * going away, presence changes and the mouse over the
-			 * icon do not. Badges there at start are not reported.
+			 * going away, presence changes, the mouse over the
+			 * icon and the taskbar coming back do not. Badges
+			 * there at start are not reported.
 			 */
 			if (badge != NULL) {
 				badges(v, badge, was, n, nx);
@@ -3115,7 +3129,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 					debug("taskbar: %d red, %d flat pixels",
 					    n[0], n[1]);
 				for (k = 0; k < 2; k++)
-					if (n[k] >= had[k] + BADGE)
+					if (n[k] >= had[k] + BADGE &&
+					    nx[k] >= 0)
 						break;
 				if (!fresh && k < 2) {
 					if (t < quiet)

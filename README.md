@@ -43,9 +43,10 @@ Two things are watched:
   badge on the taskbar icon" one. Then none for 30 seconds. Its summary
   names the app when the icon next to the badge looks like Microsoft
   Teams, Outlook, Slack, WhatsApp, Signal or Telegram, "VM" otherwise.
-  Badges going away, presence changes, the mouse over an icon and icons
-  moving along the taskbar send nothing. `badge` sets another region,
-  `badge none` turns this off.
+  Badges going away, presence changes, the mouse over an icon, icons
+  moving along the taskbar and all of it coming back, as after the lock
+  screen or a full screen window, send nothing. `badge` sets another
+  region, `badge none` turns this off.
 
 Every notification summary starts with the name of the machine, the
 desktop name the VNC server gives, so that notifications from several
