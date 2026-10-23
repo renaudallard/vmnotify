@@ -310,6 +310,9 @@ Logs:
   named "VM".
 - Badges appearing at once on icons further apart than the taskbar is
   thick are not reported.
+- With `-k`, a Shift you hold down in the VM when vmnotify presses it may
+  come up, and holding Left Alt then may switch the input language when
+  several are installed.
 
 ## License
 
