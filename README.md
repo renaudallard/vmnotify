@@ -54,7 +54,8 @@ machines can be told apart.
 Nothing has to be set for the regions: at start, vmnotify finds the
 taskbar at the bottom of the screen, by its top edge, and puts the toast
 area of 420x380 pixels right above it, larger at a larger display
-scaling.
+scaling. A taskbar on another edge needs `toast` and `badge` set, and
+apps are only named on one at the top or bottom.
 
 After a first full update, vmnotify only asks the VNC server for changes
 in the box covering the toast and taskbar areas, which it sends as they

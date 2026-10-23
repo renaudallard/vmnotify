@@ -2554,8 +2554,10 @@ badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
 	long long sx[2] = { 0, 0 };
 	int i, j, k, x, y, x0, y0, d, hi, lo, now, nn[2] = { 0, 0 };
 
+	/* the taskbar is as thick as r is on its shorter side */
 	origin(v, r, &x0, &y0);
-	d = (FLATSIDE * r->h + TASKBAR / 2) / TASKBAR;
+	d = r->w < r->h ? r->w : r->h;
+	d = (FLATSIDE * d + TASKBAR / 2) / TASKBAR;
 	n[0] = n[1] = 0;
 	for (j = 0; j < r->h; j++) {
 		for (i = 0; i < r->w; i++, was++) {
