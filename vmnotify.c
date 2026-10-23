@@ -90,7 +90,9 @@
 #define REDMIN		140	/* a red badge pixel: red at least this, */
 #define REDOVERG	110	/* this much more red than green, */
 #define REDOVERB	40	/* this much more red than blue */
-#define REDBADGE	40	/* red pixels a red badge adds, about 100 */
+#define FLATMIN		48	/* a flat badge pixel: colour this far from grey */
+#define FLATSIDE	16	/* badge width at 100% scaling */
+#define BADGE		40	/* pixels a badge adds, about 100 red, 70 flat */
 #define TASKBAR		48	/* rows of the taskbar at 100% scaling */
 #define TASKMIN		24	/* rows the taskbar top is looked for from */
 #define TASKMAX		160	/* and up to */
@@ -267,10 +269,10 @@ help(void)
 	    "Forward Windows notifications from a VMware Workstation VM "
 	    "to the desktop.\n"
 	    "\n"
-	    "  -b x,y,w,h  watch these taskbar icons for a red badge, none "
-	    "for none\n"
+	    "  -b x,y,w,h  watch these taskbar icons for badges, none for "
+	    "none\n"
 	    "              (the taskbar)\n"
-	    "  -c sec      send no other red badge notification for sec after "
+	    "  -c sec      send no other badge notification for sec after "
 	    "one\n"
 	    "              (30, at most 86400)\n"
 	    "  -d          run in the background and restart after errors\n"
@@ -2525,45 +2527,71 @@ unite(int a[4], const int b[4])
 }
 
 /*
- * Count the clearly red pixels of r. Teams and Windows draw a badge of
- * fixed colours on the taskbar icon, whatever the theme: red with a
- * white mark or count for new activity, green, yellow or grey for
- * presence, and red too for busy. Other icons may be red as well, only
- * a growing count tells of a badge turning red; icons moving along the
- * taskbar keep it.
+ * Count the pixels of badges on the taskbar icons in r: the clearly red
+ * ones in n[0] and the flat ones in n[1].
  *
- * was holds a byte per pixel of r, set for those red at the last count.
- * Put in nx the mean x of the pixels turning red, -1 if none did.
+ * Teams and other apps draw their own badge of fixed colours on their
+ * icon, whatever the theme: red with a white mark or count for new
+ * activity, green, yellow or grey for presence, and red too for busy.
+ * Windows draws the badges apps ask it for, such as the envelope of
+ * Outlook, as a disc filled with the accent colour, which can be any.
+ * Its pixels are flat: of a colour, not grey, the same as the pixels
+ * right of and under them, and in an area narrower than a badge, unlike
+ * a taskbar in the accent colour. Shaded icons have few such pixels.
+ *
+ * Other icons may have such pixels as well, only a growing count tells
+ * of a badge appearing; icons moving along the taskbar keep it.
+ *
+ * was holds a byte per pixel of r, bit 0 set for those red and bit 1 for
+ * those flat at the last count. Put in nx[0] and nx[1] the mean x of the
+ * pixels turning red or flat, -1 if none did.
  */
-static int
-reds(const struct vnc *v, const struct region *r, uint8_t *was, int *nx)
+static void
+badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
+    int nx[2])
 {
-	const uint8_t *p;
-	long long sx = 0;
-	int i, j, x, y, x0, y0, n = 0, nn = 0, red;
+	const uint8_t *p, *q;
+	long long sx[2] = { 0, 0 };
+	int i, j, k, x, y, x0, y0, d, hi, lo, now, nn[2] = { 0, 0 };
 
 	origin(v, r, &x0, &y0);
+	d = (FLATSIDE * r->h + TASKBAR / 2) / TASKBAR;
+	n[0] = n[1] = 0;
 	for (j = 0; j < r->h; j++) {
 		for (i = 0; i < r->w; i++, was++) {
 			x = x0 + i;
 			y = y0 + j;
-			red = 0;
+			now = 0;
 			if (x >= 0 && y >= 0 && x < v->w && y < v->h) {
 				p = v->fb + ((size_t)y * v->w + x) * 4;
-				red = p[2] >= REDMIN &&
-				    p[2] >= p[1] + REDOVERG &&
-				    p[2] >= p[0] + REDOVERB;
+				if (p[2] >= REDMIN && p[2] >= p[1] + REDOVERG &&
+				    p[2] >= p[0] + REDOVERB)
+					now |= 1;
+				hi = p[0] > p[1] ? p[0] : p[1];
+				hi = hi > p[2] ? hi : p[2];
+				lo = p[0] < p[1] ? p[0] : p[1];
+				lo = lo < p[2] ? lo : p[2];
+				q = p + (size_t)v->w * 4;
+				if (hi - lo >= FLATMIN && x >= d &&
+				    x + d < v->w && y + 1 < v->h &&
+				    memcmp(p, p + 4, 3) == 0 &&
+				    memcmp(p, q, 3) == 0 &&
+				    memcmp(p, p - d * 4, 3) != 0 &&
+				    memcmp(p, p + d * 4, 3) != 0)
+					now |= 2;
 			}
-			if (red && !*was) {
-				sx += x;
-				nn++;
+			for (k = 0; k < 2; k++) {
+				if ((now >> k & 1) && !(*was >> k & 1)) {
+					sx[k] += x;
+					nn[k]++;
+				}
+				n[k] += now >> k & 1;
 			}
-			n += red;
-			*was = red;
+			*was = now;
 		}
 	}
-	*nx = nn > 0 ? (int)(sx / nn) : -1;
-	return n;
+	for (k = 0; k < 2; k++)
+		nx[k] = nn[k] > 0 ? (int)(sx[k] / nn[k]) : -1;
 }
 
 /*
@@ -2956,7 +2984,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 {
 	struct pollfd pfd;
 	struct region tr, bar = { 0, 0, 0, 0 };
-	uint8_t *cur, *prev, *seen, *base, *tmp, *wasred = NULL;
+	uint8_t *cur, *prev, *seen, *base, *tmp, *was = NULL;
 	const char *app;
 	size_t len;
 	char *lasttext = NULL;
@@ -2964,7 +2992,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
-	int span = 0, wider = 0, n, nx, red = 0, findtoast, findbadge;
+	int span = 0, wider = 0, findtoast, findbadge, k;
+	int n[2], nx[2], had[2] = { 0, 0 };
 	int part[4], all[4], last[4];
 
 	pfd.fd = v->fd;
@@ -2994,7 +3023,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	if ((cur = malloc(len)) == NULL || (prev = malloc(len)) == NULL ||
 	    (seen = malloc(len)) == NULL || (base = malloc(len)) == NULL)
 		fatal("malloc");
-	if (badge != NULL && (wasred = calloc((size_t)bar.w * bar.h,
+	if (badge != NULL && (was = calloc((size_t)bar.w * bar.h,
 	    1)) == NULL)
 		fatal("calloc");
 
@@ -3036,8 +3065,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			/* the taskbar is as wide as the screen */
 			if (findbadge && bar.w != v->w) {
 				bar.w = v->w;
-				free(wasred);
-				if ((wasred = calloc((size_t)bar.w * bar.h,
+				free(was);
+				if ((was = calloc((size_t)bar.w * bar.h,
 				    1)) == NULL)
 					fatal("calloc");
 			}
@@ -3074,29 +3103,38 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				unread = 1;
 			}
 			/*
-			 * Only a badge turning red tells of new activity. It
+			 * Only a badge turning red or appearing tells of new
+			 * activity, one turning red is told as such. Badges
 			 * going away, presence changes and the mouse over the
-			 * icon do not. A red badge at start is not reported.
+			 * icon do not. Badges there at start are not reported.
 			 */
 			if (badge != NULL) {
-				n = reds(v, badge, wasred, &nx);
-				if (n != red)
-					debug("taskbar: %d red pixels", n);
-				if (!fresh && n >= red + REDBADGE) {
+				badges(v, badge, was, n, nx);
+				if (n[0] != had[0] || n[1] != had[1])
+					debug("taskbar: %d red, %d flat pixels",
+					    n[0], n[1]);
+				for (k = 0; k < 2; k++)
+					if (n[k] >= had[k] + BADGE)
+						break;
+				if (!fresh && k < 2) {
 					if (t < quiet)
-						debug("taskbar icon turned red "
-						    "during the cooldown");
+						debug("taskbar badge during "
+						    "the cooldown");
 					else {
 						if ((app = appname(v, badge,
-						    nx)) == NULL)
+						    nx[k])) == NULL)
 							app = "VM";
-						show("red badge", app);
-						notify(app, "Red badge on the "
-						    "taskbar icon");
+						show(k == 0 ? "red badge" :
+						    "badge", app);
+						notify(app, k == 0 ? "Red "
+						    "badge on the taskbar "
+						    "icon" : "New badge on "
+						    "the taskbar icon");
 						quiet = t + cooldown * 1000LL;
 					}
 				}
-				red = n;
+				had[0] = n[0];
+				had[1] = n[1];
 			}
 			fresh = 0;
 		}

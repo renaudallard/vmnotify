@@ -103,23 +103,28 @@ The same goes for a new toast taking the place of one that went away
 at the same time, as when Windows shows a queued toast.
 When one of a stack goes away, nothing is sent.
 .Pp
-The taskbar is watched as well, for the badge Teams and Windows draw in
-the corner of an icon.
-Teams keeps it green, yellow or grey with your presence and makes it red
+The taskbar is watched as well, for badges in the corner of app icons.
+Teams draws its own, green, yellow or grey with your presence and red
 with a white mark or count on new activity, also when no toast is
 shown, as for a message in the chat already open.
 These colours are the same whatever the theme.
+Windows draws the badges apps ask it for, such as the envelope Outlook
+shows for new mail, as a disc filled with the accent colour, a single
+colour where icons are shaded.
 When the clearly red pixels of the taskbar grow by at least 40, a
 .Dq Red badge on the taskbar icon
 notification is sent.
-Its summary names the app when its icon, next to the pixels turning
-red, looks like one of Microsoft Teams, Outlook, Slack, WhatsApp, Signal
-or Telegram; it is
+When those of single colour areas narrower than a badge do, a
+.Dq New badge on the taskbar icon
+notification is sent.
+Its summary names the app when its icon, next to the pixels turning red
+or of a single colour, looks like one of Microsoft Teams, Outlook,
+Slack, WhatsApp, Signal or Telegram; it is
 .Dq VM
 otherwise.
-The badge going away, presence changes, the mouse over an icon and
-icons moving along the taskbar send nothing, and neither does a badge
-already red at start.
+Badges going away, presence changes, the mouse over an icon and icons
+moving along the taskbar send nothing, and neither do badges already
+there at start.
 .Pp
 With
 .Cm checkupdates yes
@@ -149,11 +154,11 @@ by
 .Ar h
 pixels at
 .Ar x , Ns Ar y
-for a red badge instead of the taskbar, or with
+for badges instead of the taskbar, or with
 .Cm none
 nothing.
 .It Fl c Ar sec
-Send no other red badge notification for
+Send no other badge notification for
 .Ar sec
 seconds after one.
 The default is 30, the maximum 86400.
@@ -218,7 +223,7 @@ logged.
 Implies
 .Fl v .
 .It Fl v
-Print the text read from the toast area and red badges on
+Print the text read from the toast area and badges on
 standard output, or with
 .Fl d
 to
@@ -396,6 +401,9 @@ triggers a notification.
 Teams also makes its badge red when your presence is busy or do not
 disturb, as at the start of a meeting, which sends a red badge
 notification.
+.Pp
+An app starting, or an icon changing, with areas of a single colour
+may send a new badge notification.
 .Pp
 The taskbar is only looked for at the bottom of the screen, and only at
 start: a taskbar on another edge, hidden at start, or a display scaling

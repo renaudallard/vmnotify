@@ -31,16 +31,20 @@ Two things are watched:
   differences count, never particular colours, so light and dark themes
   work alike, and light text on a dark toast is turned dark on light for
   tesseract.
-- the taskbar, for the badge Teams draws in the corner of its icon. It is
-  green, yellow or grey with your presence and turns red with a white mark
+- the taskbar, for badges in the corner of app icons. Teams draws its
+  own, green, yellow or grey with your presence and red with a white mark
   or count on new activity, also when Teams shows no toast, as for a
-  message in the chat already open. When the red pixels of the taskbar
-  grow, a "Red badge on the taskbar icon" notification is sent, then none
-  for 30 seconds. Its summary names the app when the icon next to the
-  badge looks like Microsoft Teams, Outlook, Slack, WhatsApp, Signal or
-  Telegram, "VM" otherwise. The badge going away, presence changes, the
-  mouse over an icon and icons moving along the taskbar send nothing.
-  These colours do not depend on the theme. `badge` sets another region,
+  message in the chat already open. These colours do not depend on the
+  theme. Windows draws the badges apps ask it for, such as the envelope
+  Outlook shows for new mail, as a disc filled with the accent colour, a
+  single colour where icons are shaded. When the red pixels of the
+  taskbar grow, a "Red badge on the taskbar icon" notification is sent;
+  when those of single colour areas narrower than a badge do, a "New
+  badge on the taskbar icon" one. Then none for 30 seconds. Its summary
+  names the app when the icon next to the badge looks like Microsoft
+  Teams, Outlook, Slack, WhatsApp, Signal or Telegram, "VM" otherwise.
+  Badges going away, presence changes, the mouse over an icon and icons
+  moving along the taskbar send nothing. `badge` sets another region,
   `badge none` turns this off.
 
 Every notification summary starts with the name of the machine, the
@@ -170,9 +174,9 @@ remove it first:
     vmnotify [-dhVv] [-b x,y,w,h] [-c sec] [-i sec] [-m regex] [-s file]
              [-t x,y,w,h] [server]
 
-    -b x,y,w,h  watch these taskbar icons for a red badge, none for none
+    -b x,y,w,h  watch these taskbar icons for badges, none for none
                 (default: the taskbar)
-    -c sec      send no other red badge notification for sec after one
+    -c sec      send no other badge notification for sec after one
                 (default: 30, at most 86400)
     -d          run in the background, log to syslog and start again 30
                 seconds after any error, such as the VM being powered off
@@ -285,6 +289,8 @@ Logs:
 - Teams also makes its badge red when your presence is busy or do not
   disturb, as at the start of a meeting, which sends a red badge
   notification.
+- An app starting, or an icon changing, with areas of a single colour may
+  send a new badge notification.
 
 ## License
 
