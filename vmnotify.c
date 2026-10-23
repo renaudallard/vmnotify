@@ -98,6 +98,7 @@
 #define TASKMAX		160	/* and up to */
 #define EDGE		6	/* colour step of the taskbar top */
 #define ICON		16	/* side of the icons compared */
+#define PICTURE		256	/* largest taskbar picture sent, a side */
 #define ICONMATCH	55	/* colour distance of an icon still matching */
 #define SLACK		3	/* pixels an icon is looked for off its place */
 #define DBUSMAX		65536	/* largest D-Bus message part accepted */
@@ -1514,17 +1515,24 @@ balign(struct buf *b, size_t n)
 	bput(b, zero, (n - b->len % n) % n);
 }
 
+/* Set the 32 bits at off, little endian as all that is sent. */
+static void
+bset32(struct buf *b, size_t off, uint32_t v)
+{
+	b->p[off] = v & 0xff;
+	b->p[off + 1] = (v >> 8) & 0xff;
+	b->p[off + 2] = (v >> 16) & 0xff;
+	b->p[off + 3] = v >> 24;
+}
+
 static void
 bu32(struct buf *b, uint32_t v)
 {
-	uint8_t p[4];
+	static const uint8_t zero[4];
 
-	p[0] = v & 0xff;
-	p[1] = (v >> 8) & 0xff;
-	p[2] = (v >> 16) & 0xff;
-	p[3] = v >> 24;
 	balign(b, 4);
-	bput(b, p, sizeof(p));
+	bput(b, zero, sizeof(zero));
+	bset32(b, b->len - 4, v);
 }
 
 /* STRING and OBJECT_PATH */
@@ -1580,11 +1588,8 @@ dbus_call(struct buf *m, uint32_t serial, const char *dest,
 	bfield(m, 6, "s", dest);
 	if (sig != NULL)
 		bfield(m, 8, "g", sig);
-	/* the length of the header fields, little endian at offset 12 */
-	m->p[12] = (m->len - fields) & 0xff;
-	m->p[13] = ((m->len - fields) >> 8) & 0xff;
-	m->p[14] = ((m->len - fields) >> 16) & 0xff;
-	m->p[15] = (m->len - fields) >> 24;
+	/* the length of the header fields */
+	bset32(m, 12, m->len - fields);
 	balign(m, 8);
 	if (body != NULL)
 		bput(m, body->p, body->len);
@@ -1846,20 +1851,23 @@ dbus_wait(int fd, uint32_t serial, char *err, size_t errlen,
 }
 
 /*
- * Send a notification. A connection is made for each, they are rare.
+ * Send a notification, with img as its picture when not NULL, side by
+ * side RGBA pixels. A connection is made for each, they are rare.
  * Failures are only logged, the notification is lost.
  */
 static void
-dbus_notify(const char *summary, const char *body)
+dbus_notify(const char *summary, const char *body, const uint8_t *img,
+    uint32_t side)
 {
 	struct buf args = { NULL, 0, 0 }, hello = { NULL, 0, 0 };
 	struct buf caps = { NULL, 0, 0 }, call = { NULL, 0, 0 };
 	struct timeval tv = { TIMEOUT, 0 };
 	char auth[64], line[256], err[256], *e;
-	size_t len = 0;
+	size_t len = 0, at, start;
 	int fd, i, n, type, markup = 0;
 
-	debug("sending a notification, summary \"%s\"", summary);
+	debug("sending a notification, summary \"%s\"%s", summary,
+	    img != NULL ? ", with a picture" : "");
 	if ((fd = dbus_connect()) == -1)
 		return;
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1 ||
@@ -1919,8 +1927,26 @@ dbus_notify(const char *summary, const char *body)
 	bstr(&args, summary);
 	bstr(&args, e != NULL ? e : body);
 	bu32(&args, 0);		/* no actions */
-	bu32(&args, 0);		/* no hints, padded for the dict entries */
+	/* the hints, padded for their dict entries: the picture if any */
+	balign(&args, 4);
+	at = args.len;
+	bu32(&args, 0);
 	balign(&args, 8);
+	start = args.len;
+	if (img != NULL) {
+		bstr(&args, "image-data");
+		bsig(&args, "(iiibiiay)");
+		balign(&args, 8);
+		bu32(&args, side);		/* width */
+		bu32(&args, side);		/* height */
+		bu32(&args, side * 4);		/* bytes per row */
+		bu32(&args, 1);			/* with alpha */
+		bu32(&args, 8);			/* bits per sample */
+		bu32(&args, 4);			/* channels */
+		bu32(&args, side * side * 4);
+		bput(&args, img, (size_t)side * side * 4);
+	}
+	bset32(&args, at, args.len - start);
 	bu32(&args, (uint32_t)-1);
 	free(e);
 	dbus_call(&call, 3, "org.freedesktop.Notifications",
@@ -1959,7 +1985,8 @@ out:
  * pair: an 'o' request with the width, height and grey pixels of an
  * image is answered with the length and the text read; an 'n' request
  * carries the lengths and text of the summary and body of a
- * notification, it is not answered. Lengths are 32 bits, big endian.
+ * notification, then the side of its square picture, 0 for none, and
+ * its RGBA pixels, it is not answered. Lengths are 32 bits, big endian.
  */
 
 static int helper = -1;		/* the watcher's end of the socket pair */
@@ -1988,9 +2015,12 @@ helper_ocr(const uint8_t *img, int w, int h)
 	return text;
 }
 
-/* Send a notification, its summary telling the machine it comes from. */
+/*
+ * Send a notification, its summary telling the machine it comes from,
+ * with img as its picture when not NULL, side by side RGBA pixels.
+ */
 static void
-notify(const char *summary, const char *body)
+notify(const char *summary, const char *body, const uint8_t *img, int side)
 {
 	uint8_t msg[4];
 	char *from;
@@ -2005,6 +2035,10 @@ notify(const char *summary, const char *body)
 	put32(msg, strlen(body));
 	if (writeall(helper, msg, 4) == -1 ||
 	    writeall(helper, body, strlen(body)) == -1)
+		fatalx("lost the helper");
+	put32(msg, img != NULL ? side : 0);
+	if (writeall(helper, msg, 4) == -1 || (img != NULL &&
+	    writeall(helper, img, (size_t)side * side * 4) == -1))
 		fatalx("lost the helper");
 	free(from);
 }
@@ -2028,7 +2062,7 @@ static void __attribute__((__noreturn__))
 helper_loop(int fd)
 {
 	uint8_t msg[8], cmd, *img;
-	uint32_t w, h, len;
+	uint32_t w, h, len, side;
 	char *text, *str[2];
 	int i;
 
@@ -2064,7 +2098,18 @@ helper_loop(int fd)
 				str[i][len] = '\0';
 				utf8(str[i]);
 			}
-			dbus_notify(str[0], str[1]);
+			hread(fd, msg, 4);
+			if ((side = get32(msg)) > PICTURE)
+				fatalx("bad picture from the watcher");
+			img = NULL;
+			if (side > 0) {
+				if ((img = malloc((size_t)side * side * 4)) ==
+				    NULL)
+					fatal("malloc");
+				hread(fd, img, (size_t)side * side * 4);
+			}
+			dbus_notify(str[0], str[1], img, side);
+			free(img);
 			free(str[0]);
 			free(str[1]);
 		} else
@@ -2412,11 +2457,11 @@ forward(char *text)
 	char *body;
 
 	if ((body = strchr(text, '\n')) == NULL) {
-		notify(text, "");
+		notify(text, "", NULL, 0);
 		return;
 	}
 	*body = '\0';
-	notify(text, body + 1);
+	notify(text, body + 1, NULL, 0);
 	*body = '\n';
 }
 
@@ -2634,14 +2679,14 @@ unite(int a[4], const int b[4])
  * those flat at the last count. Put in nx[0] and nx[1] the mean x of the
  * pixels turning red or flat, -1 if none did or if they lie further apart
  * than the taskbar is thick, as when all of it comes back after the lock
- * screen or a full screen window.
+ * screen or a full screen window, and in ny their mean y.
  */
 static void
 badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
-    int nx[2])
+    int nx[2], int ny[2])
 {
 	const uint8_t *p;
-	long long sx[2] = { 0, 0 };
+	long long sx[2] = { 0, 0 }, sy[2] = { 0, 0 };
 	int i, j, k, x, y, x0, y0, d, hi, lo, now, side, nn[2] = { 0, 0 };
 	int ext[2][4];
 
@@ -2684,16 +2729,19 @@ badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
 						ext[k][1] = x;
 					ext[k][3] = y;
 					sx[k] += x;
+					sy[k] += y;
 				}
 				n[k] += now >> k & 1;
 			}
 			*was = now;
 		}
 	}
-	for (k = 0; k < 2; k++)
+	for (k = 0; k < 2; k++) {
 		nx[k] = nn[k] == 0 || ext[k][1] - ext[k][0] >= side ||
 		    ext[k][3] - ext[k][2] >= side ? -1 :
 		    (int)(sx[k] / nn[k]);
+		ny[k] = nx[k] < 0 ? -1 : (int)(sy[k] / nn[k]);
+	}
 }
 
 /*
@@ -3016,6 +3064,66 @@ appname(const struct vnc *v, const struct region *r, int x)
 }
 
 /*
+ * Cut out of the screen the square of the taskbar r, as thick as it,
+ * around the icon wearing a badge whose pixels are around x, y: up and
+ * right of the middle of the icon, as appname() has it. Return its RGBA
+ * pixels and put its side in side, NULL if larger than PICTURE.
+ */
+static uint8_t *
+picture(const struct vnc *v, const struct region *r, int x, int y,
+    int *side)
+{
+	const uint8_t *p;
+	uint8_t *img, *o;
+	int t, d, rx, ry, x0, y0, i, j;
+
+	t = r->w < r->h ? r->w : r->h;
+	t = t < v->w ? t : v->w;
+	t = t < v->h ? t : v->h;
+	if (t > PICTURE)
+		return NULL;
+	origin(v, r, &rx, &ry);
+	d = (17 * t + 48) / 96;
+	x0 = clamp(rx + clamp(x - d - t / 2 - rx, r->w - t), v->w - t);
+	y0 = clamp(ry + clamp(y + d - t / 2 - ry, r->h - t), v->h - t);
+	if ((img = malloc((size_t)t * t * 4)) == NULL)
+		fatal("malloc");
+	for (o = img, j = 0; j < t; j++) {
+		p = v->fb + ((size_t)(y0 + j) * v->w + x0) * 4;
+		for (i = 0; i < t; i++, p += 4, o += 4) {
+			o[0] = p[2];
+			o[1] = p[1];
+			o[2] = p[0];
+			o[3] = 255;
+		}
+	}
+	*side = t;
+	return img;
+}
+
+/*
+ * Tell of a badge on the taskbar r, red or not, whose pixels turning red
+ * or flat are around x, y: name the app when its icon is known, and show
+ * the taskbar around it.
+ */
+static void
+notify_badge(const struct vnc *v, const struct region *r, int red, int x,
+    int y)
+{
+	const char *app;
+	uint8_t *img;
+	int side = 0;
+
+	if ((app = appname(v, r, x)) == NULL)
+		app = "VM";
+	show(red ? "red badge" : "badge", app);
+	img = picture(v, r, x, y, &side);
+	notify(app, red ? "Red badge on the taskbar icon" :
+	    "New badge on the taskbar icon", img, side);
+	free(img);
+}
+
+/*
  * Return the height of the taskbar at the bottom of the screen: the first
  * row from the bottom, between TASKMIN and TASKMAX, under which most
  * pixels change colour. That is its top border, or the edge to what is
@@ -3087,7 +3195,6 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	struct pollfd pfd;
 	struct region tr, bar = { 0, 0, 0, 0 };
 	uint8_t *cur, *prev, *seen, *base, *tmp, *was = NULL;
-	const char *app;
 	size_t len;
 	char *lasttext = NULL;
 	long long t, changed = 0, nextreq = 0, quiet = 0, nextkey = 0;
@@ -3095,7 +3202,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
 	int span = 0, wider = 0, findtoast, findbadge, k;
-	int n[2], nx[2], had[2] = { 0, 0 };
+	int n[2], nx[2], ny[2], had[2] = { 0, 0 };
 	int part[4], all[4], last[4];
 
 	pfd.fd = v->fd;
@@ -3220,7 +3327,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 			 * there at start are not reported.
 			 */
 			if (badge != NULL) {
-				badges(v, badge, was, n, nx);
+				badges(v, badge, was, n, nx, ny);
 				if (n[0] != had[0] || n[1] != had[1])
 					debug("taskbar: %d red, %d flat pixels",
 					    n[0], n[1]);
@@ -3233,15 +3340,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 						debug("taskbar badge during "
 						    "the cooldown");
 					else {
-						if ((app = appname(v, badge,
-						    nx[k])) == NULL)
-							app = "VM";
-						show(k == 0 ? "red badge" :
-						    "badge", app);
-						notify(app, k == 0 ? "Red "
-						    "badge on the taskbar "
-						    "icon" : "New badge on "
-						    "the taskbar icon");
+						notify_badge(v, badge, k == 0,
+						    nx[k], ny[k]);
 						quiet = t + cooldown * 1000LL;
 					}
 				}

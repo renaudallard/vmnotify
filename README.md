@@ -42,7 +42,9 @@ Two things are watched:
   when those of single colour areas narrower than a badge do, a "New
   badge on the taskbar icon" one. Then none for 30 seconds. Its summary
   names the app when the icon next to the badge looks like Microsoft
-  Teams, Outlook, Slack, WhatsApp, Signal or Telegram, "VM" otherwise.
+  Teams, Outlook, Slack, WhatsApp, Signal or Telegram, "VM" otherwise,
+  and its image shows the taskbar around the icon, badge included, so
+  that any app can be told.
   Badges going away, presence changes, the mouse over an icon, icons
   moving along the taskbar and all of it coming back, as after the lock
   screen or a full screen window, send nothing. `badge` sets another
