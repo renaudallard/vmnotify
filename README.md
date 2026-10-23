@@ -165,7 +165,9 @@ remove it first:
 
    A region is x,y,w,h, negative x and y count from the right and bottom
    edges: `-420,-430,420,380` is 420x380 pixels starting 420 pixels from
-   the right edge and 430 from the bottom.
+   the right edge and 430 from the bottom. The `badge` region must be as
+   thick as the taskbar, the size of the icons and badges looked for comes
+   from it.
 
 6. Run it in the foreground with `-v` while a notification comes in, to
    see what is read and tune `match` if needed:
@@ -298,6 +300,10 @@ Logs:
   only its first line differing, is not read.
 - When a toast below others is dismissed while a queued one appears, the
   toasts still on screen are sent again with the new one.
+- Toasts appearing in the same screen update come as one notification,
+  the later ones in its body.
+- With `-d`, a toast still on screen when the watcher starts again is
+  sent again.
 - App icons and close buttons may add a few stray characters to the text.
 - A window underneath whose content moves right next to the toast as it
   appears, such as a list of mails getting a new one, may add some of its
