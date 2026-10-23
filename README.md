@@ -143,10 +143,11 @@ remove it first:
    host can see and control the VM. Block the port in the host firewall.
 
 3. Put the password in `~/.vmnotifyrc`, which must not be readable by
-   anyone else:
+   anyone else. Create the file, then add a line `password secret` with
+   an editor, which keeps the password out of your shell history:
 
        install -m 600 /dev/null ~/.vmnotifyrc
-       echo 'password secret' > ~/.vmnotifyrc
+       ${EDITOR:-vi} ~/.vmnotifyrc
 
 4. In Windows, make sure notifications are actually shown: Do not disturb
    off, Teams notifications on, and for Outlook on the web allow
