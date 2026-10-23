@@ -2474,7 +2474,8 @@ toast_seen(char *text, const regex_t *re, char **last)
  * Compare two w by h images of the toast area. Return the percentage of
  * pixels differing by more than NOISE, and in span the height of the
  * box around them. Put in box the part to read, and in all the box
- * around all changes when some are not in box, else box.
+ * around all changes when some lie outside the band box is in, else
+ * box.
  *
  * Changed rows with at most GAP blank rows between them form bands, a
  * toast or a stack of them is one. A toast whose background differs
@@ -2593,7 +2594,7 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 		box[3] = dy1 - dy0;
 	} else
 		memcpy(box, all, 4 * sizeof(*box));
-	/* the band holds all changes, nothing was left out */
+	/* the band holds all changes, none lies outside it */
 	if (best == n)
 		memcpy(all, box, 4 * sizeof(*all));
 	return (int)(n * 100 / ((size_t)w * h));
