@@ -173,7 +173,7 @@ remove it first:
 
 ## Usage
 
-    vmnotify [-dhVv] [-b x,y,w,h] [-c sec] [-i sec] [-m regex] [-s file]
+    vmnotify [-dhkVv] [-b x,y,w,h] [-c sec] [-i sec] [-m regex] [-s file]
              [-t x,y,w,h] [server]
 
     -b x,y,w,h  watch these taskbar icons for badges, none for none
@@ -186,6 +186,10 @@ remove it first:
                 ~/.vmnotifyrc
     -i sec      read the toast area once it did not change for sec
                 seconds (default: 1, at most 3600)
+    -k          press and release Shift in the guest every 1 to 4
+                minutes, at random, so that Windows does not lock itself
+                when the host is locked anyway; apps such as Teams may
+                then not show you as away either
     -m regex    only forward toasts whose text matches the case insensitive
                 extended regex (default: teams|outlook|firefox)
     -s file     save a screenshot of the VM to file as PPM and exit
@@ -217,6 +221,9 @@ notifications need much more, and tesseract would inherit the filter, so
 a helper process forked before it, `vmnotify: helper`, does both for the
 watcher over a socket pair and checks every request. The filter works on
 amd64 and arm64.
+
+Nothing is sent to the guest but requests for screen updates, and with
+`-k` the Shift key.
 
 Only one vmnotify watches at a time, it holds a lock on
 `$XDG_RUNTIME_DIR/vmnotify.lock` (or `~/.vmnotify.lock`), which also
@@ -251,6 +258,8 @@ by anyone else.
     cooldown 30
     # say at start when a newer release is out, asking GitHub
     checkupdates no
+    # like -k
+    keepawake no
 
 The password is removed from the environment of tesseract.
 

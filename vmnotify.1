@@ -30,7 +30,7 @@
 .Nd forward Windows VM notifications to the Linux desktop
 .Sh SYNOPSIS
 .Nm vmnotify
-.Op Fl dhVv
+.Op Fl dhkVv
 .Op Fl b Ar x,y,w,h
 .Op Fl c Ar sec
 .Op Fl i Ar sec
@@ -188,6 +188,11 @@ Read the toast area once it did not change for
 .Ar sec
 seconds.
 The default is 1, the maximum 3600.
+.It Fl k
+Press and release the left Shift key in the guest every 1 to 4 minutes,
+at random, so that Windows does not lock itself when the host is locked
+anyway.
+Apps such as Teams may then not show you as away either.
 .It Fl m Ar regex
 Only forward toasts whose text matches the case insensitive extended
 regular expression
@@ -325,6 +330,11 @@ Like
 Whether to say at start when a newer release is out, asking GitHub.
 The default is
 .Cm no .
+.It Cm keepawake Cm yes | Cm no
+Like
+.Fl k .
+The default is
+.Cm no .
 .El
 .It Pa $XDG_RUNTIME_DIR/vmnotify.lock
 Locked while
@@ -443,3 +453,7 @@ The filter is not used in builds with sanitizers, which make system calls
 of their own, nor on other architectures than amd64 and arm64.
 Builds with gcc before 14 and UndefinedBehaviorSanitizer alone need
 .Fl DNOSECCOMP .
+.Pp
+Nothing is sent to the guest but requests for screen updates, and with
+.Fl k
+the Shift key.

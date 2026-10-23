@@ -103,6 +103,9 @@
 #define DBUSMAX		65536	/* largest D-Bus message part accepted */
 #define DBUSREPLIES	32	/* messages read waiting for a D-Bus reply */
 #define GAP		24	/* blank rows between parts of one toast */
+#define AWAKEMIN	60	/* seconds between Shift presses, at least */
+#define AWAKEMAX	240	/* and at most, picked at random */
+#define XK_SHIFT_L	0xffe1	/* the left Shift key, an X keysym */
 
 extern char **environ;
 
@@ -125,6 +128,7 @@ enum {
 	K_CHECKUPDATES,
 	K_COOLDOWN,
 	K_INTERVAL,
+	K_KEEPAWAKE,
 	K_MATCH,
 	K_PASSWORD,
 	K_SERVER,
@@ -133,8 +137,8 @@ enum {
 };
 
 static const char *keywords[NKEYS] = {
-	"badge", "checkupdates", "cooldown", "interval", "match", "password",
-	"server", "toast"
+	"badge", "checkupdates", "cooldown", "interval", "keepawake", "match",
+	"password", "server", "toast"
 };
 
 static int verbose;
@@ -252,7 +256,7 @@ debug(const char *fmt, ...)
 static void __attribute__((__noreturn__))
 usage(void)
 {
-	fprintf(stderr, "usage: vmnotify [-dhVv] [-b x,y,w,h] [-c sec] "
+	fprintf(stderr, "usage: vmnotify [-dhkVv] [-b x,y,w,h] [-c sec] "
 	    "[-i sec] [-m regex] [-s file]\n"
 	    "                [-t x,y,w,h] [server]\n");
 	exit(1);
@@ -262,7 +266,7 @@ static void __attribute__((__noreturn__))
 help(void)
 {
 	printf("vmnotify %s\n"
-	    "usage: vmnotify [-dhVv] [-b x,y,w,h] [-c sec] [-i sec] "
+	    "usage: vmnotify [-dhkVv] [-b x,y,w,h] [-c sec] [-i sec] "
 	    "[-m regex] [-s file]\n"
 	    "                [-t x,y,w,h] [server]\n"
 	    "\n"
@@ -280,6 +284,8 @@ help(void)
 	    "  -i sec      read the toast area once it did not change for sec "
 	    "seconds\n"
 	    "              (1, at most 3600)\n"
+	    "  -k          press Shift every 1 to 4 minutes, keeping Windows "
+	    "from locking\n"
 	    "  -m regex    only forward toasts matching the case insensitive "
 	    "extended\n"
 	    "              regex (teams|outlook|firefox)\n"
@@ -312,6 +318,7 @@ help(void)
 	    "  badge x,y,w,h|none   like -b\n"
 	    "  interval sec         like -i\n"
 	    "  cooldown sec         like -c\n"
+	    "  keepawake yes|no     like -k (no)\n"
 	    "  checkupdates yes|no  say at start when a newer release is "
 	    "out (no)\n", VERSION);
 	exit(0);
@@ -1003,6 +1010,23 @@ vnc_request(struct vnc *v, int incremental, const int box[4])
 	put16(req + 6, box[2]);
 	put16(req + 8, box[3]);
 	vwrite(v, req, sizeof(req));
+}
+
+/* Press and release key, an X keysym. */
+static void
+vnc_key(struct vnc *v, uint32_t key)
+{
+	uint8_t ev[16];
+	int i;
+
+	debug("pressing key %#x", key);
+	for (i = 0; i < 2; i++) {
+		ev[i * 8] = 4;
+		ev[i * 8 + 1] = i == 0;
+		put16(ev + i * 8 + 2, 0);
+		put32(ev + i * 8 + 4, key);
+	}
+	vwrite(v, ev, sizeof(ev));
 }
 
 /* Fetch the part of the screen covering a and b, see area(). */
@@ -2994,7 +3018,7 @@ offscreen(const struct vnc *v, const struct region *r, const char *name)
 
 static void __attribute__((__noreturn__))
 watch(struct vnc *v, const struct region *toast, const struct region *badge,
-    const regex_t *re, int interval, int cooldown)
+    const regex_t *re, int interval, int cooldown, int keepawake)
 {
 	struct pollfd pfd;
 	struct region tr, bar = { 0, 0, 0, 0 };
@@ -3002,7 +3026,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	const char *app;
 	size_t len;
 	char *lasttext = NULL;
-	long long t, changed = 0, nextreq = 0, quiet = 0;
+	long long t, changed = 0, nextreq = 0, quiet = 0, nextkey = 0;
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
@@ -3012,6 +3036,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 
 	pfd.fd = v->fd;
 	pfd.events = POLLIN;
+	srandom((unsigned int)now() ^ (unsigned int)getpid());
 
 	/*
 	 * Regions 0 wide are found along the taskbar, on the whole screen
@@ -3053,6 +3078,13 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		 * changed while another request was pending.
 		 */
 		t = now();
+		/* a key now and then keeps Windows from locking itself */
+		if (keepawake && t >= nextkey) {
+			if (nextkey != 0)
+				vnc_key(v, XK_SHIFT_L);
+			nextkey = t + AWAKEMIN * 1000LL + random() %
+			    ((AWAKEMAX - AWAKEMIN) * 1000 + 1);
+		}
 		if (!pending && t >= nextreq) {
 			area(v, toast, badge, box);
 			vnc_request(v, !filling, box);
@@ -3491,6 +3523,17 @@ number(const char *s, long min, long max, const char *what)
 	return n;
 }
 
+/* Return 1 for yes, 0 for no or nothing. */
+static int
+yesno(const char *s, const char *what)
+{
+	if (s == NULL || strcmp(s, "no") == 0)
+		return 0;
+	if (strcmp(s, "yes") != 0)
+		fatalx("invalid %s: %s", what, s);
+	return 1;
+}
+
 static void
 parse_region(const char *s, struct region *r)
 {
@@ -3551,7 +3594,8 @@ main(int argc, char *argv[])
 	const char *host, *shot = NULL;
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
 	char port[8], *p, *where;
-	int ch, error, fd, k, dflag = 0, interval = 1, cooldown = 30;
+	int ch, error, fd, k, dflag = 0, kflag = 0, interval = 1, cooldown = 30;
+	int keepawake;
 
 	/* make sure 0, 1 and 2 are open, children rely on them */
 	while ((fd = open("/dev/null", O_RDWR)) != -1 && fd <= 2)
@@ -3565,7 +3609,7 @@ main(int argc, char *argv[])
 	argv = inittitle(argc, argv);
 
 	/* + makes glibc stop at the server like musl does */
-	while ((ch = getopt(argc, argv, "+b:c:dhi:m:s:t:Vv")) != -1) {
+	while ((ch = getopt(argc, argv, "+b:c:dhi:km:s:t:Vv")) != -1) {
 		switch (ch) {
 		case 'b':
 			opt[K_BADGE] = optarg;
@@ -3580,6 +3624,9 @@ main(int argc, char *argv[])
 			help();
 		case 'i':
 			opt[K_INTERVAL] = optarg;
+			break;
+		case 'k':
+			kflag = 1;
 			break;
 		case 'm':
 			opt[K_MATCH] = optarg;
@@ -3643,13 +3690,10 @@ main(int argc, char *argv[])
 		parse_region(opt[K_BADGE], &badge);
 	if (opt[K_COOLDOWN] != NULL)
 		cooldown = number(opt[K_COOLDOWN], 0, 86400, "cooldown");
+	keepawake = yesno(opt[K_KEEPAWAKE], "keepawake") || kflag;
 	/* asking GitHub is only done when asked for */
-	if (opt[K_CHECKUPDATES] != NULL &&
-	    strcmp(opt[K_CHECKUPDATES], "yes") == 0)
+	if (yesno(opt[K_CHECKUPDATES], "checkupdates"))
 		checkversion();
-	else if (opt[K_CHECKUPDATES] != NULL &&
-	    strcmp(opt[K_CHECKUPDATES], "no") != 0)
-		fatalx("invalid checkupdates: %s", opt[K_CHECKUPDATES]);
 	if (opt[K_INTERVAL] != NULL)
 		interval = number(opt[K_INTERVAL], 1, 3600, "interval");
 	if (opt[K_TOAST] != NULL)
@@ -3683,6 +3727,9 @@ main(int argc, char *argv[])
 	else
 		debug("badge region %d,%d,%d,%d, cooldown %d", bp->x, bp->y,
 		    bp->w, bp->h, cooldown);
+	if (keepawake)
+		debug("pressing Shift every %d to %d seconds", AWAKEMIN,
+		    AWAKEMAX);
 	debug("password %s", opt[K_PASSWORD] == NULL ? "not set" :
 	    envpw != NULL ? "from VNC_PASSWORD" : "from ~/.vmnotifyrc");
 
@@ -3754,5 +3801,5 @@ main(int argc, char *argv[])
 		snprintf(machine, sizeof(machine), "%s", where);
 	else
 		setproctitle("vmnotify: watcher %s %s", machine, where);
-	watch(&v, &toast, bp, &re, interval, cooldown);
+	watch(&v, &toast, bp, &re, interval, cooldown, keepawake);
 }
