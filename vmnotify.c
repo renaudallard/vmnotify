@@ -3658,7 +3658,7 @@ main(int argc, char *argv[])
 	char *opt[NKEYS] = { NULL }, *rc[NKEYS] = { NULL }, *envpw = NULL;
 	char port[8], *p, *where;
 	int ch, error, fd, k, dflag = 0, kflag = 0, interval = 1, cooldown = 30;
-	int keepawake;
+	int keepawake, checkupdates;
 
 	/* make sure 0, 1 and 2 are open, children rely on them */
 	while ((fd = open("/dev/null", O_RDWR)) != -1 && fd <= 2)
@@ -3754,9 +3754,7 @@ main(int argc, char *argv[])
 	if (opt[K_COOLDOWN] != NULL)
 		cooldown = number(opt[K_COOLDOWN], 0, 86400, "cooldown");
 	keepawake = yesno(opt[K_KEEPAWAKE], "keepawake") || kflag;
-	/* asking GitHub is only done when asked for */
-	if (yesno(opt[K_CHECKUPDATES], "checkupdates"))
-		checkversion();
+	checkupdates = yesno(opt[K_CHECKUPDATES], "checkupdates");
 	if (opt[K_INTERVAL] != NULL)
 		interval = number(opt[K_INTERVAL], 1, 3600, "interval");
 	if (opt[K_TOAST] != NULL)
@@ -3839,6 +3837,9 @@ main(int argc, char *argv[])
 	}
 
 	fd = lock();
+	/* asked for only, once all is set and nothing else watches */
+	if (checkupdates)
+		checkversion();
 	if (dflag) {
 		if (daemon(0, 0) == -1)
 			fatal("daemon");

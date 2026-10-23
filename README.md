@@ -77,8 +77,10 @@ desktop, which every desktop environment has; notify-send is not
 needed.
 
 With `checkupdates yes` in `~/.vmnotifyrc` and curl installed, vmnotify
-asks GitHub at start which release is the latest and says so when it is
-newer than itself. It asks nothing by default.
+asks GitHub which release is the latest when it starts watching, and says
+so when it is newer than itself. With `-d` it asks once; run by the
+systemd unit, which starts it again 30 seconds after it stops, it asks
+each time. It asks nothing by default.
 
 ## Installing
 

@@ -132,11 +132,16 @@ With
 in
 .Pa ~/.vmnotifyrc ,
 .Nm
-asks GitHub at start with
+asks GitHub with
 .Xr curl 1
-which release is the latest and says so when it is newer.
+which release is the latest when it starts watching, and says so when
+it is newer.
 Nothing is said when curl is missing or GitHub out of reach, which it is
 given 5 seconds for.
+With
+.Fl d
+it asks once; run by the systemd unit, which starts it again 30 seconds
+after it stops, it asks each time.
 Nothing is asked by default.
 .Pp
 Only one
