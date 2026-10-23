@@ -84,6 +84,7 @@
 #define MINCHANGE	15	/* percent of the toast area to change */
 #define MINHEIGHT	40	/* or rows it spans, about two text lines */
 #define NOISE		32	/* grey levels a pixel may move unseen */
+#define STILL		1000	/* 1 pixel in this many may change, still */
 #define AROUND		20	/* pixels on each side judging the background */
 #define BLOCK		8	/* side of the blocks a toast fills */
 #define REFRESHES	10	/* requests to get a full update covered */
@@ -2544,6 +2545,17 @@ differ(uint8_t a, uint8_t b)
 	return a > b + NOISE || b > a + NOISE;
 }
 
+/* Return 1 if at most 1 in STILL of the len pixels of a and b differ. */
+static int
+still(const uint8_t *a, const uint8_t *b, size_t len)
+{
+	size_t i, n = 0;
+
+	for (i = 0; i < len; i++)
+		n += differ(a[i], b[i]);
+	return n * STILL <= len;
+}
+
 static int
 compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
     int all[4], int *solid, int *span)
@@ -3310,8 +3322,9 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				if (badge != NULL)
 					offscreen(v, badge, "badge");
 			}
+			/* a blinking cursor or such leaves the area still */
 			crop(v, toast, cur);
-			if (fresh || memcmp(cur, prev, len) != 0) {
+			if (fresh || !still(cur, prev, len)) {
 				debug("toast area changed");
 				tmp = prev;
 				prev = cur;

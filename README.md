@@ -11,7 +11,8 @@ workspace.
 Two things are watched:
 
 - the toast area in the bottom right corner. When it changed and then
-  stayed the same for one second (toasts slide in), the changed part is
+  stayed the same for one second (toasts slide in; a blinking cursor does
+  not count), the changed part is
   run through tesseract, and if the text matches a regex (default
   `teams|outlook|firefox`) it is sent as a desktop notification, the first
   line as summary and the rest as body. The area is also read once at
@@ -287,8 +288,9 @@ Logs:
 - Only the VNC security types None and VNC authentication are supported,
   which is what VMware Workstation offers.
 - A toast is only read once the toast area stopped changing for the time
-  set with `-i`. If something keeps changing behind a translucent toast, such
-  as a video, it is not read.
+  set with `-i`. If something larger than a blinking cursor keeps changing
+  in the area, such as a video behind a translucent toast or an animation
+  next to it, the toast is not read.
 - When the VM window is in front and you are working in Windows, the
   notifications show up on both sides.
 - A toast that is not forwarded and then replaced by one that is, with

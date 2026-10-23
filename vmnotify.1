@@ -64,6 +64,8 @@ with
 .Fl i ,
 which skips the slide in animation of toasts, it is compared with how it
 looked without a toast, ignoring small colour shifts.
+Changes to at most a thousandth of the area, such as a blinking text
+cursor, leave it the same.
 Unless a toast is already on screen, the change is only read when it
 covers at least 15% of the area or spans at least 40 rows, about two
 lines of text, so that a line changing in a window underneath does not
@@ -400,8 +402,9 @@ port should be blocked in the host firewall.
 A toast is only read once the toast area stopped changing for the time
 set with
 .Fl i .
-If something keeps changing behind a translucent toast, such as a video,
-it is not read.
+If something larger than a blinking cursor keeps changing in the area,
+such as a video behind a translucent toast or an animation next to it,
+the toast is not read.
 .Pp
 A toast that is not forwarded and then replaced by one that is, with
 only its first line differing, is not read.
