@@ -2550,7 +2550,7 @@ static void
 badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
     int nx[2])
 {
-	const uint8_t *p, *q;
+	const uint8_t *p;
 	long long sx[2] = { 0, 0 };
 	int i, j, k, x, y, x0, y0, d, hi, lo, now, nn[2] = { 0, 0 };
 
@@ -2571,11 +2571,10 @@ badges(const struct vnc *v, const struct region *r, uint8_t *was, int n[2],
 				hi = hi > p[2] ? hi : p[2];
 				lo = p[0] < p[1] ? p[0] : p[1];
 				lo = lo < p[2] ? lo : p[2];
-				q = p + (size_t)v->w * 4;
 				if (hi - lo >= FLATMIN && x >= d &&
 				    x + d < v->w && y + 1 < v->h &&
 				    memcmp(p, p + 4, 3) == 0 &&
-				    memcmp(p, q, 3) == 0 &&
+				    memcmp(p, p + (size_t)v->w * 4, 3) == 0 &&
 				    memcmp(p, p - d * 4, 3) != 0 &&
 				    memcmp(p, p + d * 4, 3) != 0)
 					now |= 2;
