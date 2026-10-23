@@ -291,8 +291,14 @@ Logs:
 - Teams also makes its badge red when your presence is busy or do not
   disturb, as at the start of a meeting, which sends a red badge
   notification.
-- An app starting, or an icon changing, with areas of a single colour may
-  send a new badge notification.
+- An app starting whose icon was not on the taskbar yet sends a red or new
+  badge notification when the icon has red areas or areas of a single
+  colour, as those of Acrobat, YouTube, Office, Gmail, Signal or Spotify
+  do. On Windows 10, so may a progress bar on an icon or a flashing one.
+  The badge of the Widgets button sends a red or new badge notification
+  named "VM".
+- Badges appearing at once on icons further apart than the taskbar is
+  thick are not reported.
 
 ## License
 
