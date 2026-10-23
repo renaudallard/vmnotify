@@ -231,7 +231,8 @@ Nothing is sent to the guest but requests for screen updates, and with
 
 Only one vmnotify watches at a time, it holds a lock on
 `$XDG_RUNTIME_DIR/vmnotify.lock` (or `~/.vmnotify.lock`), which also
-contains its process ID. A screenshot with `-s` can always be taken.
+contains its process ID and must be a regular file owned by you. A
+screenshot with `-s` can always be taken.
 
 Without `-d`, vmnotify exits on errors, including when the VNC connection
 fails or drops.

@@ -1670,6 +1670,7 @@ unescape(char *s)
 static int
 dbus_connect(void)
 {
+	struct stat st;
 	char path[PATH_MAX], *all, *next, *addr, *kv, *val;
 	const char *env, *dir;
 	int fd = -1, abstract;
@@ -1683,8 +1684,14 @@ dbus_connect(void)
 			    "is set");
 			return -1;
 		}
+		/* only a socket of ours, as libdbus has it */
 		if ((size_t)snprintf(path, sizeof(path), "%s/bus", dir) >=
-		    sizeof(path) || (fd = dbus_socket(path, 0)) == -1)
+		    sizeof(path) || lstat(path, &st) == -1)
+			log_warn("session bus %s", path);
+		else if (!S_ISSOCK(st.st_mode) || st.st_uid != getuid())
+			log_warnx("session bus %s: not a socket owned by you",
+			    path);
+		else if ((fd = dbus_socket(path, 0)) == -1)
 			log_warn("session bus %s", path);
 		return fd;
 	}
@@ -3619,6 +3626,7 @@ setproctitle(const char *fmt, ...)
 static int
 lock(void)
 {
+	struct stat st;
 	char path[PATH_MAX];
 	const char *dir;
 	int fd, n;
@@ -3632,8 +3640,13 @@ lock(void)
 	if (n < 0 || (size_t)n >= sizeof(path))
 		fatalx("lock file path is too long");
 	debug("lock file %s", path);
-	if ((fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600)) == -1)
+	/* the pid goes in it, never through a link or into another's file */
+	if ((fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+	    0600)) == -1 && errno != ELOOP)
 		fatal("%s", path);
+	if (fd == -1 || fstat(fd, &st) == -1 || !S_ISREG(st.st_mode) ||
+	    st.st_uid != getuid())
+		fatalx("%s: must be a regular file owned by you", path);
 	if (flock(fd, LOCK_EX | LOCK_NB) == -1) {
 		if (errno == EWOULDBLOCK)
 			fatalx("already running, see %s", path);

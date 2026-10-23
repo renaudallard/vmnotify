@@ -277,7 +277,8 @@ or
 .Ql unix:abstract=
 address that can be reached is used.
 When it is not set,
-.Pa $XDG_RUNTIME_DIR/bus .
+.Pa $XDG_RUNTIME_DIR/bus ,
+when that is a socket owned by you.
 .It Ev HOME
 Where
 .Pa .vmnotifyrc
@@ -350,6 +351,7 @@ The default is
 Locked while
 .Nm
 watches, holds its process ID.
+It must be a regular file owned by you.
 .Pa ~/.vmnotify.lock
 is used when
 .Ev XDG_RUNTIME_DIR
