@@ -295,9 +295,9 @@ help(void)
 	    "              (1, at most 3600)\n"
 	    "  -k          press Shift every 1 to 4 minutes, keeping Windows "
 	    "from locking\n"
-	    "  -m regex    only forward toasts matching the case insensitive "
-	    "extended\n"
-	    "              regex (teams|outlook|firefox)\n"
+	    "  -m regex    only forward toasts whose header matches the case "
+	    "insensitive\n"
+	    "              extended regex (teams|outlook|firefox)\n"
 	    "  -s file     save a screenshot of the VM as PPM to file and "
 	    "exit\n"
 	    "  -t x,y,w,h  toast area (420x380 above the taskbar, more at "
@@ -2465,6 +2465,27 @@ overlap(char *a, char *b, char **end)
 	return 0;
 }
 
+/*
+ * Return 1 if the header of text, its first line holding a character,
+ * matches re. The header of a toast names the app, while matching the
+ * other lines would forward a window underneath whose text names it.
+ */
+static int
+header(const regex_t *re, char *text)
+{
+	char *line, *nl;
+	int match;
+
+	if ((line = keyed(text)) == NULL)
+		return 0;
+	if ((nl = strchr(line, '\n')) != NULL)
+		*nl = '\0';
+	match = regexec(re, line, 0, NULL, 0) == 0;
+	if (nl != NULL)
+		*nl = '\n';
+	return match;
+}
+
 /* Send text, the first line as summary and the rest as body. */
 static void
 forward(char *text)
@@ -2506,7 +2527,7 @@ toast_seen(char *text, const regex_t *re, char **last)
 		free(text);
 		return 1;
 	}
-	if (regexec(re, text, 0, NULL, 0) != 0) {
+	if (!header(re, text)) {
 		free(*last);
 		*last = NULL;
 		free(text);
@@ -2530,7 +2551,7 @@ toast_seen(char *text, const regex_t *re, char **last)
 		memcpy(rest, text, len);
 		strcpy(rest + len, end != NULL ? end : "");
 		tidy(rest);
-		if (regexec(re, rest, 0, NULL, 0) == 0)
+		if (header(re, rest))
 			forward(rest);
 		free(rest);
 	} else

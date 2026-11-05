@@ -13,15 +13,16 @@ Two things are watched:
 - the toast area in the bottom right corner. When it changed and then
   stayed the same for one second (toasts slide in; a blinking cursor does
   not count), the changed part is
-  run through tesseract, and if the text matches a regex (default
-  `teams|outlook|firefox`) it is sent as a desktop notification, the first
+  run through tesseract, and if its header, the first line holding a
+  letter or digit, matches a regex (default `teams|outlook|firefox`) it
+  is sent as a desktop notification, the first
   line as summary and the rest as body. The area is also read once at
   start. A toast is sent once while it stays on screen. Lines are compared
   by their letters and digits and count as the same when at most a quarter
   of them differs, so stray characters read from an icon or a button
   showing under the mouse do not make it new. When a new toast stacks with
   one already sent, or takes the place of one that went away, only the
-  lines of the new one are sent, if they match the regex.
+  lines of the new one are sent, if its header matches the regex.
 
   To save work, a change is only read when it covers at least 15% of the
   area or two lines of text, so a line changing in a window underneath is
@@ -197,8 +198,11 @@ remove it first:
                 minutes, at random, so that Windows does not lock itself
                 when the host is locked anyway; apps such as Teams may
                 then not show you as away either
-    -m regex    only forward toasts whose text matches the case insensitive
-                extended regex (default: teams|outlook|firefox)
+    -m regex    only forward toasts whose header, the first line read,
+                matches the case insensitive extended regex (default:
+                teams|outlook|firefox); on Windows 11 the header names
+                the app, the other lines are not matched so that a
+                message mentioning it is not taken for a toast
     -s file     save a screenshot of the VM to file as PPM and exit
     -t x,y,w,h  toast area (default: 420x380 above the taskbar, more at
                 a larger display scaling)
@@ -307,9 +311,13 @@ Logs:
 - App icons and close buttons may add a few stray characters to the text.
 - A window underneath whose content moves right next to the toast as it
   appears, such as a list of mails getting a new one, may add some of its
-  text to the notification.
-- Any window in the bottom right corner whose text matches the regex
-  triggers a notification, once per distinct text.
+  text to the notification, or keep the toast from being sent when that
+  text comes above it.
+- Any window in the bottom right corner whose first line of text matches
+  the regex triggers a notification, once per distinct text.
+- A toast whose first line does not name the app, such as one of the
+  Windows 10 Mail app starting with the sender, is only sent when the
+  regex matches that line.
 - Teams also makes its badge red when your presence is busy or do not
   disturb, as at the start of a meeting, which sends a red badge
   notification.

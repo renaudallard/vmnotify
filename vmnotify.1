@@ -84,7 +84,8 @@ When the area is back to how it looked before the toast, the toast is
 gone and nothing is read.
 The area is also read once at start, so a toast already on screen is
 forwarded.
-If the recognised text matches
+If the header of the recognised text, its first line holding a letter or
+digit, matches
 .Ar regex ,
 its first line is sent as summary and the remaining lines as body in a
 desktop notification, over D-Bus.
@@ -99,7 +100,7 @@ and count as the same when at most a quarter of them differs, so that
 stray characters read from an icon, or from a button appearing when the
 mouse is over the toast, do not make it new.
 When a new toast stacks with one already sent, both are read and only
-the lines of the new one are sent, if they match
+the lines of the new one are sent, if its header matches
 .Ar regex .
 The same goes for a new toast taking the place of one that went away
 at the same time, as when Windows shows a queued toast.
@@ -206,9 +207,11 @@ at random, so that Windows does not lock itself when the host is locked
 anyway.
 Apps such as Teams may then not show you as away either.
 .It Fl m Ar regex
-Only forward toasts whose text matches the case insensitive extended
-regular expression
+Only forward toasts whose header, the first line read, matches the case
+insensitive extended regular expression
 .Ar regex .
+On Windows 11 the header names the app, the other lines are not matched
+so that a message mentioning it is not taken for a toast.
 The default is
 .Ql teams|outlook|firefox .
 .It Fl s Ar file
@@ -425,11 +428,17 @@ App icons and close buttons may add a few stray characters to the text.
 .Pp
 A window underneath whose content moves right next to the toast as it
 appears, such as a list of mails getting a new one, may add some of its
-text to the notification.
+text to the notification, or keep the toast from being sent when that
+text comes above it.
 .Pp
-Any window in the toast area whose text matches
+Any window in the toast area whose first line of text matches
 .Ar regex
 triggers a notification.
+.Pp
+A toast whose first line does not name the app, such as one of the
+Windows 10 Mail app starting with the sender, is only sent when
+.Ar regex
+matches that line.
 .Pp
 Teams also makes its badge red when your presence is busy or do not
 disturb, as at the start of a meeting, which sends a red badge
