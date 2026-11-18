@@ -85,6 +85,7 @@
 #define MINHEIGHT	40	/* or rows it spans, about two text lines */
 #define NOISE		32	/* grey levels a pixel may move unseen */
 #define STILL		1000	/* 1 pixel in this many may change, still */
+#define BLACK		8	/* grey levels under this are a black screen */
 #define AROUND		20	/* pixels on each side judging the background */
 #define BLOCK		8	/* side of the blocks a toast fills */
 #define REFRESHES	10	/* requests to get a full update covered */
@@ -2503,19 +2504,26 @@ forward(char *text)
 
 /*
  * Return 1 if text is a toast to forward, sent or already sent, or if
- * nothing was read while one sent may still be on screen.
+ * nothing was read while one sent may still be on screen: hidden tells
+ * that the area is black. Nothing read in an area that is not means the
+ * toast is gone.
  */
 static int
-toast_seen(char *text, const regex_t *re, char **last)
+toast_seen(char *text, const regex_t *re, char **last, int hidden)
 {
 	char *old, *start, *end, *rest;
 	size_t len;
 
 	show("toast area", text);
 
-	/* nothing read, as on a black screen, a toast sent may still be on */
+	/* nothing read: only a black screen may hide a toast sent, still on */
 	if (*text == '\0') {
 		free(text);
+		if (*last != NULL && !hidden) {
+			debug("nothing read, toast gone");
+			free(*last);
+			*last = NULL;
+		}
 		return *last != NULL;
 	}
 
@@ -2598,6 +2606,18 @@ still(const uint8_t *a, const uint8_t *b, size_t len)
 	for (i = 0; i < len; i++)
 		n += differ(a[i], b[i]);
 	return n * STILL <= len;
+}
+
+/* Return 1 if the len pixels of a are all black, as on a screen off. */
+static int
+black(const uint8_t *a, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		if (a[i] >= BLACK)
+			return 0;
+	return 1;
 }
 
 static int
@@ -3283,7 +3303,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 	unsigned int gen;
 	int box[4], fresh = 1, dirty, filling = 0, fills = 0, pending = 0;
 	int unread = 0, read = 0, showing = 0, doread, pct = 0, solid = 0;
-	int span = 0, wider = 0, findtoast, findbadge, k;
+	int span = 0, wider = 0, hidden, findtoast, findbadge, k;
 	int n[2], nx[2], ny[2], had[2] = { 0, 0 };
 	int part[4], all[4], last[4];
 
@@ -3439,6 +3459,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		 *
 		 * - The first time, read all of it.
 		 * - A toast on screen and the area back to base: it is gone.
+		 *   So it is when nothing is read in an area that is not black.
 		 * - No toast on screen: a new one covers much of the area or at
 		 *   least two text lines. A smaller change, such as a line in
 		 *   a window underneath, is not read; such changes add up
@@ -3492,15 +3513,16 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				    "%dx%d at %d,%d", pct, part[2], part[3],
 				    part[0], part[1]);
 				read = 1;
+				hidden = black(prev, len);
 				showing = toast_seen(ocr(prev, toast->w, part),
-				    re, &lasttext);
+				    re, &lasttext, hidden);
 				if (!showing && wider) {
 					memcpy(part, all, sizeof(part));
 					debug("nothing to forward, reading all "
 					    "changes, %dx%d at %d,%d", part[2],
 					    part[3], part[0], part[1]);
 					showing = toast_seen(ocr(prev, toast->w,
-					    part), re, &lasttext);
+					    part), re, &lasttext, hidden);
 				}
 				if (showing)
 					memcpy(last, part, sizeof(last));

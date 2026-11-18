@@ -27,12 +27,13 @@ Two things are watched:
   To save work, a change is only read when it covers at least 15% of the
   area or two lines of text, so a line changing in a window underneath is
   ignored, and a toast going away is noticed by the area looking like it
-  did before. When the toast paints its own background, changes away from
-  it, such as a line changing higher up in a window underneath, are not
-  read with it, unless nothing to forward was read in it. Only colour
-  differences count, never particular colours, so light and dark themes
-  work alike, and light text on a dark toast is turned dark on light for
-  tesseract.
+  did before, or by no text being read in it, unless it is black: a black
+  screen may hide a toast that is still there. When the toast paints its
+  own background, changes away from it, such as a line changing higher up
+  in a window underneath, are not read with it, unless nothing to forward
+  was read in it. Only colour differences count, never particular colours,
+  so light and dark themes work alike, and light text on a dark toast is
+  turned dark on light for tesseract.
 - the taskbar, for badges in the corner of app icons. Teams draws its own,
   green, yellow or grey with your presence and red with a white mark or
   count on new activity, also when Teams shows no toast, as for a message
@@ -308,6 +309,9 @@ Logs:
   the later ones in its body.
 - With `-d`, a toast still on screen when the watcher starts again is
   sent again.
+- A toast going away over a black background, when it was on screen at
+  start or the screen changed under it, is not seen as gone, and a toast
+  like it coming next may not be sent.
 - App icons and close buttons may add a few stray characters to the text.
 - A window underneath whose content moves right next to the toast as it
   appears, such as a list of mails getting a new one, may add some of its
