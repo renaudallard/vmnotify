@@ -296,6 +296,9 @@ Logs:
 
 - Only the VNC security types None and VNC authentication are supported,
   which is what VMware Workstation offers.
+- The taskbar is only looked for at start. When it is hidden then, set
+  `toast` and `badge`; after changing the display scaling, start vmnotify
+  again or set them.
 - A toast is only read once the toast area stopped changing for the time
   set with `-i`. If something larger than a blinking cursor keeps changing
   in the area, such as a video behind a translucent toast or an animation
