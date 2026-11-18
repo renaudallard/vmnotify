@@ -105,9 +105,10 @@ Or build from source with a C compiler and make:
     make
     sudo make install
 
-A static binary can be built with musl:
+A static binary can be built with musl, position independent as the
+released ones are:
 
-    make CC=musl-gcc LDFLAGS=-static
+    CFLAGS="-O2 -pipe -fPIE" make CC=musl-gcc LDFLAGS=-static-pie
 
 To upgrade, stop a running vmnotify, install the new one the same way
 and start it again:
