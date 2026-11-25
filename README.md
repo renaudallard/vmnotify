@@ -30,7 +30,8 @@ Two things are watched:
   did before, or by no text being read in it, unless it is black: a black
   screen may hide a toast that is still there. A toast stays clear of the
   left edge of the area, by 1/32 of its width or more, and ends in its
-  bottom sixth: a change that does not is a window underneath and is not
+  bottom sixth or paints its own background, as a Teams meeting toast
+  higher up does: a change that does not is a window underneath and is not
   read, and with a toast on screen only the toast is read again, to see if
   it is still there. When the toast paints its own background, changes
   away from it, such as a line changing higher up in a window underneath,
@@ -175,8 +176,8 @@ remove it first:
    the right edge and 430 from the bottom. The `badge` region must be as
    thick as the taskbar, the size of the icons and badges looked for comes
    from it. Toasts must stay clear of the left edge of the `toast` area,
-   by 1/32 of its width or more, and end in its bottom sixth, or they are
-   taken for a window underneath.
+   by 1/32 of its width or more, and end in its bottom sixth or paint
+   their own background, or they are taken for a window underneath.
 
 6. Run it in the foreground with `-v` while a notification comes in, to
    see what is read and tune `match` if needed:
@@ -330,7 +331,8 @@ Logs:
 - A window in the toast area whose first line of text matches the regex
   triggers a notification, once per distinct text, when it is there at
   start, or when what changes in it stays clear of the left edge of the
-  area and ends in its bottom sixth, as a toast does.
+  area and ends in its bottom sixth or repaints a solid block, as a toast
+  does.
 - A toast whose first line does not name the app, such as one of the
   Windows 10 Mail app starting with the sender, is only sent when the
   regex matches that line.

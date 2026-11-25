@@ -2726,14 +2726,15 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 /*
  * Return 1 if box, in the toast area r, is shaped like a toast or a
  * stack of them: clear of the left edge of the area and ending near its
- * bottom. A window underneath changes anywhere, mostly from the left
- * edge on or higher up.
+ * bottom, or solid, as a toast painting its own background higher up.
+ * A window underneath changes anywhere, mostly from the left edge on or
+ * higher up.
  */
 static int
-shaped(const int box[4], const struct region *r)
+shaped(const int box[4], const struct region *r, int solid)
 {
-	return box[0] >= r->w / CLEAR &&
-	    box[1] + box[3] >= r->h - r->h / REACH;
+	return box[0] >= r->w / CLEAR && (solid ||
+	    box[1] + box[3] >= r->h - r->h / REACH);
 }
 
 /* Grow box a to also hold box b. */
@@ -3490,8 +3491,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		 * A new solid rectangle read alone may be something else, such
 		 * as a window opening, with the toast left out. When nothing
 		 * to forward was read in it, all changes are read if they are
-		 * shaped like a toast. When still nothing was, the area becomes
-		 * base.
+		 * shaped like a toast and end near the bottom. When still
+		 * nothing was, the area becomes base.
 		 */
 		if (unread && t - changed >= interval * 1000LL) {
 			unread = 0;
@@ -3517,7 +3518,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				    toast->w, toast->h, part, all, &solid,
 				    &span);
 				if (showing && span > 0) {
-					if (shaped(part, toast))
+					if (shaped(part, toast, solid))
 						unite(part, last);
 					else
 						memcpy(part, last,
@@ -3527,11 +3528,12 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				    span >= MINHEIGHT)) {
 					wider = memcmp(part, all,
 					    sizeof(part)) != 0;
-					if (!shaped(part, toast)) {
+					if (!shaped(part, toast, solid)) {
 						memcpy(part, all, sizeof(part));
 						wider = 0;
+						solid = 0;
 					}
-					doread = shaped(part, toast);
+					doread = shaped(part, toast, solid);
 					if (!doread) {
 						debug("%dx%d at %d,%d is not "
 						    "like a toast, not read",
@@ -3551,7 +3553,8 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				hidden = black(prev, len);
 				showing = toast_seen(ocr(prev, toast->w, part),
 				    re, &lasttext, hidden);
-				if (!showing && wider && shaped(all, toast)) {
+				if (!showing && wider &&
+				    shaped(all, toast, 0)) {
 					memcpy(part, all, sizeof(part));
 					debug("nothing to forward, reading all "
 					    "changes, %dx%d at %d,%d", part[2],

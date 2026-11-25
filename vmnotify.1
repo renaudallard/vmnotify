@@ -71,7 +71,8 @@ covers at least 15% of the area or spans at least 40 rows, about two
 lines of text, so that a line changing in a window underneath does not
 cost a recognition.
 A toast stays clear of the left edge of the area, by 1/32 of its width
-or more, and ends in its bottom sixth.
+or more, and ends in its bottom sixth or paints its own background, as a
+Teams meeting toast higher up does.
 A change that does not is a window underneath: it is not read, and with
 a toast on screen only the toast is read again, to see if it is still
 there.
@@ -238,7 +239,8 @@ The toast area, instead of the one found above the taskbar.
 At 100% display scaling, that is
 .Ql -420,-430,420,380 .
 Toasts must stay clear of its left edge, by 1/32 of its width or more,
-and end in its bottom sixth, or they are taken for a window underneath.
+and end in its bottom sixth or paint their own background, or they are
+taken for a window underneath.
 .It Fl V
 Log every step with a timestamp on standard error, or with
 .Fl d
@@ -447,7 +449,7 @@ A window in the toast area whose first line of text matches
 .Ar regex
 triggers a notification when it is there at start, or when what changes
 in it stays clear of the left edge of the area and ends in its bottom
-sixth, as a toast does.
+sixth or repaints a solid block, as a toast does.
 .Pp
 A toast whose first line does not name the app, such as one of the
 Windows 10 Mail app starting with the sender, is only sent when
