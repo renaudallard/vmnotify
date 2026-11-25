@@ -22,7 +22,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd November 18, 2026
+.Dd November 25, 2026
 .Dt VMNOTIFY 1
 .Os
 .Sh NAME
@@ -70,6 +70,11 @@ Unless a toast is already on screen, the change is only read when it
 covers at least 15% of the area or spans at least 40 rows, about two
 lines of text, so that a line changing in a window underneath does not
 cost a recognition.
+A toast stays clear of the left edge of the area, by 1/32 of its width
+or more, and ends in its bottom sixth.
+A change that does not is a window underneath: it is not read, and with
+a toast on screen only the toast is read again, to see if it is still
+there.
 Only the changed part is read: the solid rectangle a toast paints when
 its background differs from what is underneath, or else all changed
 pixels.
@@ -232,6 +237,8 @@ and
 The toast area, instead of the one found above the taskbar.
 At 100% display scaling, that is
 .Ql -420,-430,420,380 .
+Toasts must stay clear of its left edge, by 1/32 of its width or more,
+and end in its bottom sixth, or they are taken for a window underneath.
 .It Fl V
 Log every step with a timestamp on standard error, or with
 .Fl d
@@ -417,8 +424,9 @@ If something larger than a blinking cursor keeps changing in the area,
 such as a video behind a translucent toast or an animation next to it,
 the toast is not read.
 .Pp
-A toast that is not forwarded and then replaced by one that is, with
-only its first line differing, is not read.
+A toast that is not forwarded and then replaced by one that is is not
+read when only its first line differs, or when the lines that differ end
+above the bottom sixth of the toast area.
 When a toast below others is dismissed while a queued one appears, the
 toasts still on screen are sent again with the new one.
 Toasts appearing in the same screen update come as one notification,
@@ -431,14 +439,15 @@ start or the screen changed under it, is not seen as gone, and a toast
 like it coming next may not be sent.
 App icons and close buttons may add a few stray characters to the text.
 .Pp
-A window underneath whose content moves right next to the toast as it
-appears, such as a list of mails getting a new one, may add some of its
-text to the notification, or keep the toast from being sent when that
-text comes above it.
+A window underneath whose content moves as the toast appears, such as a
+list of mails getting a new one or a chat getting a message, may keep
+the toast from being sent, or add some of its text to the notification.
 .Pp
-Any window in the toast area whose first line of text matches
+A window in the toast area whose first line of text matches
 .Ar regex
-triggers a notification.
+triggers a notification when it is there at start, or when what changes
+in it stays clear of the left edge of the area and ends in its bottom
+sixth, as a toast does.
 .Pp
 A toast whose first line does not name the app, such as one of the
 Windows 10 Mail app starting with the sender, is only sent when

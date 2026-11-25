@@ -28,12 +28,16 @@ Two things are watched:
   area or two lines of text, so a line changing in a window underneath is
   ignored, and a toast going away is noticed by the area looking like it
   did before, or by no text being read in it, unless it is black: a black
-  screen may hide a toast that is still there. When the toast paints its
-  own background, changes away from it, such as a line changing higher up
-  in a window underneath, are not read with it, unless nothing to forward
-  was read in it. Only colour differences count, never particular colours,
-  so light and dark themes work alike, and light text on a dark toast is
-  turned dark on light for tesseract.
+  screen may hide a toast that is still there. A toast stays clear of the
+  left edge of the area, by 1/32 of its width or more, and ends in its
+  bottom sixth: a change that does not is a window underneath and is not
+  read, and with a toast on screen only the toast is read again, to see if
+  it is still there. When the toast paints its own background, changes
+  away from it, such as a line changing higher up in a window underneath,
+  are not read with it, unless nothing to forward was read in it. Only
+  colour differences count, never particular colours, so light and dark
+  themes work alike, and light text on a dark toast is turned dark on
+  light for tesseract.
 - the taskbar, for badges in the corner of app icons. Teams draws its own,
   green, yellow or grey with your presence and red with a white mark or
   count on new activity, also when Teams shows no toast, as for a message
@@ -170,7 +174,9 @@ remove it first:
    edges: `-420,-430,420,380` is 420x380 pixels starting 420 pixels from
    the right edge and 430 from the bottom. The `badge` region must be as
    thick as the taskbar, the size of the icons and badges looked for comes
-   from it.
+   from it. Toasts must stay clear of the left edge of the `toast` area,
+   by 1/32 of its width or more, and end in its bottom sixth, or they are
+   taken for a window underneath.
 
 6. Run it in the foreground with `-v` while a notification comes in, to
    see what is read and tune `match` if needed:
@@ -305,8 +311,9 @@ Logs:
   next to it, the toast is not read.
 - When the VM window is in front and you are working in Windows, the
   notifications show up on both sides.
-- A toast that is not forwarded and then replaced by one that is, with
-  only its first line differing, is not read.
+- A toast that is not forwarded and then replaced by one that is is not
+  read when only its first line differs, or when the lines that differ
+  end above the bottom sixth of the toast area.
 - When a toast below others is dismissed while a queued one appears, the
   toasts still on screen are sent again with the new one.
 - Toasts appearing in the same screen update come as one notification,
@@ -317,12 +324,13 @@ Logs:
   start or the screen changed under it, is not seen as gone, and a toast
   like it coming next may not be sent.
 - App icons and close buttons may add a few stray characters to the text.
-- A window underneath whose content moves right next to the toast as it
-  appears, such as a list of mails getting a new one, may add some of its
-  text to the notification, or keep the toast from being sent when that
-  text comes above it.
-- Any window in the bottom right corner whose first line of text matches
-  the regex triggers a notification, once per distinct text.
+- A window underneath whose content moves as the toast appears, such as
+  a list of mails getting a new one or a chat getting a message, may keep
+  the toast from being sent, or add some of its text to the notification.
+- A window in the toast area whose first line of text matches the regex
+  triggers a notification, once per distinct text, when it is there at
+  start, or when what changes in it stays clear of the left edge of the
+  area and ends in its bottom sixth, as a toast does.
 - A toast whose first line does not name the app, such as one of the
   Windows 10 Mail app starting with the sender, is only sent when the
   regex matches that line.

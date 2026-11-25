@@ -107,6 +107,8 @@
 #define DBUSMAX		65536	/* largest D-Bus message part accepted */
 #define DBUSREPLIES	32	/* messages read waiting for a D-Bus reply */
 #define GAP		24	/* blank rows between parts of one toast */
+#define CLEAR		32	/* a toast leaves 1 in this many columns free */
+#define REACH		6	/* and ends in the last 1 in this many rows */
 #define AWAKEMIN	60	/* seconds between Shift presses, at least */
 #define AWAKEMAX	240	/* and at most, picked at random */
 #define XK_SHIFT_L	0xffe1	/* the left Shift key, an X keysym */
@@ -2721,6 +2723,19 @@ compare(const uint8_t *a, const uint8_t *b, int w, int h, int box[4],
 	return (int)(n * 100 / ((size_t)w * h));
 }
 
+/*
+ * Return 1 if box, in the toast area r, is shaped like a toast or a
+ * stack of them: clear of the left edge of the area and ending near its
+ * bottom. A window underneath changes anywhere, mostly from the left
+ * edge on or higher up.
+ */
+static int
+shaped(const int box[4], const struct region *r)
+{
+	return box[0] >= r->w / CLEAR &&
+	    box[1] + box[3] >= r->h - r->h / REACH;
+}
+
 /* Grow box a to also hold box b. */
 static void
 unite(int a[4], const int b[4])
@@ -3463,15 +3478,20 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 		 * - No toast on screen: a new one covers much of the area or at
 		 *   least two text lines. A smaller change, such as a line in
 		 *   a window underneath, is not read; such changes add up
-		 *   against base until they are.
+		 *   against base until they are. A larger one not shaped like
+		 *   a toast is a window underneath too: it is not read and the
+		 *   area becomes base.
 		 * - Otherwise read the part that changed, with the toast read
 		 *   before so that a replacement keeps the unchanged header,
-		 *   unless no pixel changed by more than NOISE.
+		 *   unless no pixel changed by more than NOISE. When that part
+		 *   is not shaped like a toast, a window moved: only the toast
+		 *   read before is read again, it may be gone.
 		 *
 		 * A new solid rectangle read alone may be something else, such
 		 * as a window opening, with the toast left out. When nothing
-		 * to forward was read in it, all changes are read. When still
-		 * nothing was, the area becomes base.
+		 * to forward was read in it, all changes are read if they are
+		 * shaped like a toast. When still nothing was, the area becomes
+		 * base.
 		 */
 		if (unread && t - changed >= interval * 1000LL) {
 			unread = 0;
@@ -3497,13 +3517,28 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				    toast->w, toast->h, part, all, &solid,
 				    &span);
 				if (showing && span > 0) {
-					unite(part, last);
+					if (shaped(part, toast))
+						unite(part, last);
+					else
+						memcpy(part, last,
+						    sizeof(part));
 					doread = 1;
 				} else if (!showing && (pct >= MINCHANGE ||
 				    span >= MINHEIGHT)) {
-					doread = 1;
 					wider = memcmp(part, all,
 					    sizeof(part)) != 0;
+					if (!shaped(part, toast)) {
+						memcpy(part, all, sizeof(part));
+						wider = 0;
+					}
+					doread = shaped(part, toast);
+					if (!doread) {
+						debug("%dx%d at %d,%d is not "
+						    "like a toast, not read",
+						    part[2], part[3], part[0],
+						    part[1]);
+						memcpy(base, prev, len);
+					}
 				} else
 					debug("toast area %d%% different over "
 					    "%d rows, not read", pct, span);
@@ -3516,7 +3551,7 @@ watch(struct vnc *v, const struct region *toast, const struct region *badge,
 				hidden = black(prev, len);
 				showing = toast_seen(ocr(prev, toast->w, part),
 				    re, &lasttext, hidden);
-				if (!showing && wider) {
+				if (!showing && wider && shaped(all, toast)) {
 					memcpy(part, all, sizeof(part));
 					debug("nothing to forward, reading all "
 					    "changes, %dx%d at %d,%d", part[2],
